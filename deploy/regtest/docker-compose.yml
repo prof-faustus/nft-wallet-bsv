@@ -16,6 +16,13 @@ services:
     command:
       - 'bitcoind'
       - '-regtest=1'
+      # Activate Genesis from height 1 so post-Genesis script rules apply
+      # (no 520-byte push limit, large scripts, restored arithmetic). The
+      # OP_PUSH_TX covenant (docs/08 §8.4) pushes a >520-byte sighash
+      # preimage; without Genesis the node rejects it as "Push value size
+      # limit exceeded". Small-push tests (P2PKH, carrier swap) are
+      # unaffected. Caught by internal/covenant live test on a real node.
+      - '-genesisactivationheight=1'
       - '-rpcuser=nftbsv'
       - '-rpcpassword=nftbsv-dev-rpc-password'
       - '-rpcbind=0.0.0.0'

@@ -99,6 +99,15 @@ gofmt -l internal tools cmd    # empty output = clean
   `s` cases (one of which a sweep originally caught as a real bug, since fixed)
   are accepted on the engine.
 
+- **TestLive_CovenantMintSwapAndStripRejected** (`internal/covenant`, live,
+  `NFTBSV_RUN_LIVE=1`) — on the REAL SV Node: a covenant token is minted and
+  transferred by a covenant swap (the node accepts it under consensus script
+  rules), and a spend that STRIPS the successor token output is REJECTED by the
+  node. Verified locally against the regtest node and in CI's chain job. This
+  run also surfaced and fixed a real config bug — the regtest node needs
+  `-genesisactivationheight=1` so post-Genesis script rules (no 520-byte push
+  limit) apply to the >520-byte OP_PUSH_TX preimage.
+
 Security note: a defect in the in-script arithmetic can only make CHECKSIG
 *fail* (reject a spend) — never accept a forged preimage. The strip/mutate
 guarantee is the byte-exact hashOutputs check after a successful CHECKSIG.
