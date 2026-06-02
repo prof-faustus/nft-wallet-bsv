@@ -27,10 +27,8 @@ import (
 	"github.com/bsv-blockchain/go-sdk/transaction"
 	sighash "github.com/bsv-blockchain/go-sdk/transaction/sighash"
 	"github.com/bsv-blockchain/go-sdk/transaction/template/p2pkh"
+	"github.com/prof-faustus/nft-wallet-bsv/internal/bsvscript"
 )
-
-// opReturn is the banned opcode (CLAUDE.md §2, I-NFT-1).
-const opReturn = 0x6a
 
 // Builder assembles a transaction. Inputs carry an unlocking-script
 // template only for the inputs the local party can sign; Sign() fills
@@ -161,12 +159,6 @@ func (b *Builder) assertNoOpReturn() error {
 	return nil
 }
 
-// containsOpReturn reports whether script bytes contain opcode 0x6a.
-func containsOpReturn(b []byte) bool {
-	for _, by := range b {
-		if by == opReturn {
-			return true
-		}
-	}
-	return false
-}
+// containsOpReturn reports whether script bytes contain OP_RETURN as an
+// OPCODE (not a 0x6a data byte inside a push) — see bsvscript.HasOpReturn.
+func containsOpReturn(b []byte) bool { return bsvscript.HasOpReturn(b) }

@@ -17,6 +17,7 @@ import (
 	"github.com/bsv-blockchain/go-sdk/transaction"
 	sighash "github.com/bsv-blockchain/go-sdk/transaction/sighash"
 	"github.com/bsv-blockchain/go-sdk/transaction/template/p2pkh"
+	"github.com/prof-faustus/nft-wallet-bsv/internal/bsvscript"
 	"github.com/prof-faustus/nft-wallet-bsv/internal/wallet"
 )
 
@@ -121,9 +122,10 @@ func VerifySwapTx(rawTxHex string, exp SwapExpectation) error {
 	if exp.MaxOutputs > 0 && len(tx.Outputs) > exp.MaxOutputs {
 		return fmt.Errorf("swap-verify: too many outputs (%d > %d) — surprise output", len(tx.Outputs), exp.MaxOutputs)
 	}
-	// I-NFT-1: no OP_RETURN in any output.
+	// I-NFT-1: no OP_RETURN opcode in any output (opcode-aware — a 0x6a
+	// data byte inside a push is not a violation).
 	for i, o := range tx.Outputs {
-		if o.LockingScript != nil && bytes.IndexByte(*o.LockingScript, opReturn) >= 0 {
+		if o.LockingScript != nil && bsvscript.HasOpReturn(*o.LockingScript) {
 			return fmt.Errorf("swap-verify: output %d contains OP_RETURN (I-NFT-1)", i)
 		}
 	}

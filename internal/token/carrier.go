@@ -32,6 +32,8 @@ import (
 	"bytes"
 	"encoding/hex"
 	"fmt"
+
+	"github.com/prof-faustus/nft-wallet-bsv/internal/bsvscript"
 )
 
 // opcodes used by the carrier.
@@ -135,10 +137,10 @@ func BuildLockingScript(tokenId, descriptor, hPayload, ownerPKH []byte) ([]byte,
 	b.WriteByte(opEqualVerify)
 	b.WriteByte(opCheckSig)
 	out := b.Bytes()
-	if bytes.IndexByte(out, opReturn) >= 0 {
-		// Defense in depth: the construction cannot produce 0x6a, but
-		// assert it (I-NFT-1) rather than trust the construction.
-		return nil, fmt.Errorf("token: refusing carrier with OP_RETURN byte (I-NFT-1)")
+	if bsvscript.HasOpReturn(out) {
+		// Defense in depth: assert no OP_RETURN OPCODE (not a 0x6a data
+		// byte inside the identity pushes) — I-NFT-1.
+		return nil, fmt.Errorf("token: refusing carrier with OP_RETURN opcode (I-NFT-1)")
 	}
 	return out, nil
 }
