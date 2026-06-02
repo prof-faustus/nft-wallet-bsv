@@ -1,0 +1,35 @@
+# SV Node regtest — the Stage 1 proving ground (OD-4 = SV Node; docs/05
+# §5.3). A daemon, not committed application code. The chain adapter
+# (internal/chain/svnode) and the WS8 harness point here; nothing else
+# talks to the node directly.
+#
+# Bring up:  docker compose -p nftbsv -f deploy/regtest/docker-compose.yml up -d
+# Tear down: docker compose -p nftbsv -f deploy/regtest/docker-compose.yml down -v
+#
+# NOTE (learned, pinned): the bitcoinsv image entrypoint only initialises
+# the regtest datadir when argv[0] is `bitcoind`; and bitcoinsv 1.1.0
+# refuses to boot without the mandatory -minminingtxfee policy param.
+services:
+  bsv-node:
+    image: bitcoinsv/bitcoin-sv:1.1.0
+    container_name: nftbsv-regtest
+    command:
+      - 'bitcoind'
+      - '-regtest=1'
+      - '-rpcuser=nftbsv'
+      - '-rpcpassword=nftbsv-dev-rpc-password'
+      - '-rpcbind=0.0.0.0'
+      - '-rpcallowip=0.0.0.0/0'
+      - '-rpcport=18332'
+      - '-server=1'
+      - '-listen=0'
+      - '-printtoconsole=1'
+      - '-disablewallet=0'
+      - '-fallbackfee=0.00001'
+      - '-minminingtxfee=0.00000500'
+      # txindex so getrawtransaction works for any tx (adapter
+      # OutputStatus distinguishes spent-vs-unknown via tx existence).
+      - '-txindex=1'
+    ports:
+      - '18332:18332'
+    restart: 'no'

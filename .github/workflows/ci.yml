@@ -47,7 +47,7 @@ jobs:
         run: go run ./tools/gates/spectrace
 
   test:
-    name: go test
+    name: go test (unit, hermetic)
     runs-on: ubuntu-latest
     env:
       GOFLAGS: -trimpath
@@ -56,4 +56,50 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.23'
+      # Live (NFTBSV_RUN_LIVE) tests self-skip without the env, so this is
+      # the hermetic unit suite (incl. the offline SPV/CH-1 verification).
       - run: go test ./...
+
+  chain-integration:
+    name: live regtest chain (WS1 adapter DoD)
+    runs-on: ubuntu-latest
+    env:
+      GOFLAGS: -trimpath
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+
+      - name: bring up the SV Node regtest (deploy/regtest)
+        run: docker compose -p nftbsv -f deploy/regtest/docker-compose.yml up -d
+
+      - name: wait for node RPC
+        run: |
+          for i in $(seq 1 60); do
+            if curl -fsS -u nftbsv:nftbsv-dev-rpc-password \
+                 --data '{"jsonrpc":"1.0","id":"x","method":"getblockcount","params":[]}' \
+                 -H 'content-type: application/json' http://127.0.0.1:18332/ >/dev/null 2>&1; then
+              echo "node up"; exit 0
+            fi
+            sleep 2
+          done
+          echo "node never came up"
+          docker compose -p nftbsv -f deploy/regtest/docker-compose.yml logs bsv-node || true
+          exit 1
+
+      - name: run the live WS1 DoD tests through the adapter
+        env:
+          NFTBSV_RUN_LIVE: '1'
+          NFTBSV_RPC_URL: http://127.0.0.1:18332/
+          NFTBSV_RPC_USER: nftbsv
+          NFTBSV_RPC_PASS: nftbsv-dev-rpc-password
+        run: go test -count=1 -v ./internal/chain/svnode/
+
+      - name: logs on failure
+        if: failure()
+        run: docker compose -p nftbsv -f deploy/regtest/docker-compose.yml logs bsv-node || true
+
+      - name: tear down
+        if: always()
+        run: docker compose -p nftbsv -f deploy/regtest/docker-compose.yml down -v || true

@@ -11,6 +11,6 @@
     "PL-1": { "status": "planned", "ws": "WS6", "desc": "Payload confidentiality NOT provided in Stage 1" },
     "CN-1": { "status": "planned", "ws": "WS3", "desc": "Continuity convention-enforced unless covenant (OD-3)" },
     "NET-1": { "status": "planned", "ws": "WS4", "desc": "Authenticated secure channel over hostile transport" },
-    "CH-1": { "status": "planned", "ws": "WS1", "desc": "SPV verification path; reorg surfaced not hidden" }
+    "CH-1": { "status": "active", "ws": "WS1", "desc": "SPV verification path; reorg surfaced not hidden" }
   }
 }

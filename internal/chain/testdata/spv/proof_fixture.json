@@ -1,0 +1,9 @@
+{
+  "_source": "captured from SV Node regtest (deploy/regtest); single-tx block. Used by spv_test.go to verify the CMerkleBlock parser + merkle-root recompute offline (CH-1).",
+  "txid": "7014aa18753560163b9b6668863f51ee151077ba94eafc3231861ca4c73755f0",
+  "block_hash": "373b35ecf9cf34dc396b11790bd7c8fcaece39ae4f31d23971d73845ea3287a0",
+  "block_height": 204,
+  "merkleroot": "97dc6633d1012cfadea54e19a47b32d8a0a1ea2a2da918fb0fe7afec8c4ebb62",
+  "header_hex": "0000002082a7066e0d31d67029179bd3783829eb8ee51abb65d078bb9f093b548996172662bb4e8cecafe70ffb18a92d2aeaa1a0d8327ba4194ea5defa2c01d13366dc975cb21e6affff7f2000000000",
+  "txoutproof_hex": "0000002082a7066e0d31d67029179bd3783829eb8ee51abb65d078bb9f093b548996172662bb4e8cecafe70ffb18a92d2aeaa1a0d8327ba4194ea5defa2c01d13366dc975cb21e6affff7f20000000000200000002de7ba2beca6eff3792d19904afab28aea17f176099b3d7abd64d4822477249f6f05537c7a41c863132fcea94ba771015ee513f8668669b3b1660357518aa14700105"
+}
