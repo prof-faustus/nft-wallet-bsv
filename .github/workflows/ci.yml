@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  # The four gates of docs/05 §5.2 / CLAUDE.md. All must pass for a commit
+  # to be mergeable. They bite from commit 1 (WS0), before any feature code.
+  gates:
+    name: gates (no-op-return · bsv-only · lint/format · spec-traceability)
+    runs-on: ubuntu-latest
+    env:
+      GOFLAGS: -trimpath
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+
+      - name: build the Go sidecar + gate tooling
+        run: go build ./...
+
+      - name: gate — lint/format (gofmt check mode, no write)
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "lint/format: FAIL — these files are not gofmt-clean:"; echo "$unformatted"
+            exit 1
+          fi
+          echo "lint/format: OK"
+
+      - name: gate — go vet
+        run: go vet ./...
+
+      - name: gate — no-op-return
+        run: go run ./tools/gates/noopreturn
+
+      - name: gate — bsv-only
+        run: go run ./tools/gates/bsvonly
+
+      - name: gate — spec-traceability
+        run: go run ./tools/gates/spectrace
+
+  test:
+    name: go test
+    runs-on: ubuntu-latest
+    env:
+      GOFLAGS: -trimpath
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+      - run: go test ./...

@@ -107,3 +107,18 @@ payment in a **single atomic transaction** with no taken-payment-without-token s
 ..5), with on-chain control transfer that **is** verifiable, and with deterministic,
 specified behaviour on every abort, fault, double-spend, and reorg edge in the matrix
 (`docs/05` §5.5). That is the Stage 1 claim, and it is the whole of it.
+
+---
+
+## Resolution log (RUN_PLAN §C)
+
+Decisions made by the project owner to start the run. Recorded here per
+`CLAUDE.md` §4 (no hidden assumptions / decisions live in `docs/07`).
+
+| OD | Resolution | Date | Notes |
+|---|---|---|---|
+| **OD-4** | **SV Node (regtest)** | 2026-06-02 | bitcoind-style regtest (`bitcoinsv/bitcoin-sv` image). `generatetoaddress` for block-on-demand; `invalidateblock`/`reconsiderblock` for forced reorg — exact methods pinned in the node adapter as `TODO(verify)` against the running version (Pre-flight P2/P4). |
+| **OD-2** | **Native .NET/C# shell + Go sidecar** | 2026-06-02 | Owner chose "native .NET/C#" over Electron+Go. Reconciled with `CLAUDE.md` §1 (which mandates the **BSV Go SDK for services**): the .NET/C# layer is the **UI shell only**; a **Go sidecar using the BSV Go SDK** holds all keys and performs all BSV/script/chain operations (renderer holds no keys — WS7 DoD). The BSV TypeScript SDK client named in §1/`docs/01` is **superseded** by the .NET shell. If the owner intends *pure* .NET (no Go sidecar), that requires a `CLAUDE.md` §1 amendment — flagged, not assumed. |
+
+OD-5 (carrier A), OD-8 (transport pluggable), OD-3 (covenant deferred), OD-6/OD-7 (off),
+OD-1 (HH-1 baseline) remain at their RUN_PLAN §C defaults until their gating phase.
