@@ -57,6 +57,16 @@ func (s *Server) Handler() http.Handler { return s.mux }
 func (s *Server) SetChainDepth(d uint32)            { s.mu.Lock(); s.curDepth = d; s.mu.Unlock() }
 func (s *Server) SetAttest(a deletion.AttestStatus) { s.mu.Lock(); s.attest = a; s.mu.Unlock() }
 
+// Advance applies an engine event under the server lock (safe against
+// concurrent /status reads). Used by the chain/deletion adapters and the
+// --demo driver.
+func (s *Server) Advance(ev engine.EventType) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, err := s.eng.Apply(engine.Event{Type: ev})
+	return err
+}
+
 func (s *Server) healthz(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("ok")) }
 
 type statusResp struct {

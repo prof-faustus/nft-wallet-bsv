@@ -10,18 +10,57 @@ import (
 	"flag"
 	"log"
 	"net/http"
+	"time"
 
+	"github.com/prof-faustus/nft-wallet-bsv/internal/deletion"
 	"github.com/prof-faustus/nft-wallet-bsv/internal/engine"
 	bsvparams "github.com/prof-faustus/nft-wallet-bsv/internal/params"
 	"github.com/prof-faustus/nft-wallet-bsv/internal/sidecar"
 	"github.com/prof-faustus/nft-wallet-bsv/internal/wallet"
 )
 
+// runDemo walks the engine through the canonical happy path on a timer so
+// the shell visibly shows the HONEST progression (in-progress → amber
+// PENDING → green CONFIRMED → deletion CLAIM). This is a DEMO of the UI's
+// honesty surface only — it scripts engine events; it is not a real
+// on-chain exchange.
+func runDemo(s *sidecar.Server) {
+	steps := []struct {
+		ev    engine.EventType
+		depth uint32
+		pause time.Duration
+	}{
+		{engine.EvStartPairing, 0, 2 * time.Second},
+		{engine.EvHelloAckValid, 0, 2 * time.Second},
+		{engine.EvOffer, 0, 2 * time.Second},
+		{engine.EvAcceptMatches, 0, 2 * time.Second},
+		{engine.EvPayloadDeliveredOK, 0, 2 * time.Second},
+		{engine.EvSwapAssembled, 0, 1 * time.Second},
+		{engine.EvTermsVerifyOK, 0, 1 * time.Second},
+		{engine.EvPeerPartialReceived, 0, 1 * time.Second},
+		{engine.EvOwnSigned, 0, 1 * time.Second},
+		{engine.EvBroadcastAccepted, 0, 4 * time.Second}, // amber PENDING
+		{engine.EvConfirmedAtDepth, 1, 3 * time.Second},  // green CONFIRMED
+		{engine.EvDeletionAttestValid, 1, 0},             // buyer DONE (CDA claim)
+	}
+	for _, st := range steps {
+		time.Sleep(st.pause)
+		s.SetChainDepth(st.depth)
+		if st.ev == engine.EvDeletionAttestValid {
+			s.SetAttest(deletion.AttestValid)
+		}
+		if err := s.Advance(st.ev); err != nil {
+			log.Printf("demo: %v", err)
+		}
+	}
+}
+
 func main() {
 	addr := flag.String("addr", "127.0.0.1:8090", "localhost bind address (IPC only)")
 	ksPath := flag.String("keystore", "nftbsv-keystore.json", "encrypted keystore path")
 	pass := flag.String("passphrase", "", "keystore passphrase (required)")
 	role := flag.String("role", "buyer", "seller|buyer")
+	demo := flag.Bool("demo", false, "drive the engine through the happy path on a timer (UI honesty demo; not a real exchange)")
 	flag.Parse()
 
 	if *pass == "" {
@@ -37,6 +76,10 @@ func main() {
 		r = engine.Seller
 	}
 	s := sidecar.New(w, engine.New(r), 1)
+	if *demo {
+		log.Printf("sidecar: --demo driving the engine through the happy path (UI honesty demo)")
+		go runDemo(s)
+	}
 
 	log.Printf("sidecar: listening on %s (role=%s) — localhost IPC for the .NET shell", *addr, *role)
 	srv := &http.Server{Addr: *addr, Handler: s.Handler()}
