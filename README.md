@@ -61,13 +61,32 @@ Stage 1 **does not** provide, and **does not claim**:
   (no `OP_RETURN`) is specified as a hardening — see `docs/02`
   §6 — and is an open decision for whether to pull into Stage 1.
 
+## 2.5 What Stage 2 adds — BUILT (see `docs/08`, `TESTING.md`)
+
+Stage 2 is implemented, exhaustively tested, and CI-green (incl. a live SV Node job):
+
+- **Real payload encryption + crypto-shredding**, five selectable schemes
+  (`internal/shred`): `ecdh-singleuse`, `key-surrender`, `reencrypt`, `tee-attested`
+  (a labelled software stand-in for a TEE), and `threshold` — a **dealerless threshold
+  ECDSA** key generation/sharing (`internal/threshold`, Shamir over secp256k1 N,
+  reconstruct-to-use). Cooperative shred is a CLAIM, never "verified deletion".
+- **Script-enforced token continuity — the `OP_PUSH_TX` covenant (OD-3), built**
+  (`internal/covenant`). A spend must reproduce a successor token output with identical
+  identity + value; stripping/mutating is impossible in Script. No `OP_RETURN`. Proven
+  in the BSV interpreter (3000-iteration sweep + every tampering vector) **and on a real
+  SV Node** (faithful mint+swap accepted, strip rejected).
+- **A menu-driven exchange** (`internal/sidecar` `/v2`, native WPF shell in `apps/shell`):
+  the user chooses every option (scheme, continuity, all amounts) — no assistant-selected
+  defaults; a missing required value is an error. Bots/simulation are test-only.
+
 ## 3. Deferred to later stages (slots are defined now)
 
-| Item | Stage | Defined in |
+| Item | Stage | Status / Defined in |
 |---|---|---|
-| Real payload encryption + crypto-shredding | 2 | `docs/04` §5 |
-| The **T**-element (read as **TEE**; see `docs/07`) — attested execution + attested wipe | 2+ ("T-stage") | `docs/04` §6, `docs/07` |
-| Script-enforced token continuity (`OP_PUSH_TX` covenant) | open decision | `docs/02` §6 |
+| Real payload encryption + crypto-shredding | 2 | ✅ **built** — `internal/shred`, `docs/08` |
+| Dealerless threshold ECDSA custody | 2 | ✅ **built** — `internal/threshold`, `docs/08` |
+| Script-enforced token continuity (`OP_PUSH_TX` covenant) | 2 (OD-3) | ✅ **built** — `internal/covenant`, `docs/08` §8.4 |
+| The **T**-element (read as **TEE**; see `docs/07`) — attested execution + attested wipe | 2+ ("T-stage") | software stand-in (`tee-attested`); hardware TEE deferred — `docs/04` §6, `docs/07` |
 | Full two-tier discovery network (Bitcoin-style + Bitmessage-style) | later | `docs/03` §8 |
 
 ## 4. Document map
