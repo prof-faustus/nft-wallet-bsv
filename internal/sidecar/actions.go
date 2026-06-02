@@ -66,6 +66,7 @@ func (s *Server) EnableLiveActions(ad liveAdapter) {
 	s.mux.HandleFunc("/action/confirm", s.actionHandler(s.doConfirm))
 	s.mux.HandleFunc("/action/attest", s.actionHandler(s.doAttest))
 	s.mux.HandleFunc("/log", s.logHandler)
+	s.mux.HandleFunc("/", s.webHandler) // interactive browser control panel
 }
 
 type actionResp struct {
