@@ -71,4 +71,48 @@ namespace NftWalletBsv.Shell
         public string? error { get; set; }
         public string[]? log { get; set; }
     }
+
+    // ---- v2 menu-driven API ------------------------------------------------
+
+    // V2Resp mirrors internal/sidecar.v2Resp. `data` is left as raw JSON since
+    // the shell only needs ok/error/log for its menu flow.
+    public sealed class V2Resp
+    {
+        public bool ok { get; set; }
+        public string? error { get; set; }
+        public string[]? log { get; set; }
+    }
+
+    public sealed class V2Options
+    {
+        public bool ok { get; set; }
+        public OptionsData? data { get; set; }
+        public sealed class OptionsData
+        {
+            public string[]? schemes { get; set; }
+        }
+    }
+
+    public partial class SidecarV2
+    {
+        private readonly HttpClient _http = new HttpClient();
+        private readonly string _base;
+        public SidecarV2(string baseUrl) { _base = baseUrl.TrimEnd('/'); }
+
+        // GetOptionsAsync fetches the menus (e.g. the crypto-shred scheme list)
+        // so the UI never hard-codes the choices.
+        public async Task<V2Options?> GetOptionsAsync()
+        {
+            HttpResponseMessage resp = await _http.PostAsync(_base + "/v2/options", new StringContent("{}", Encoding.UTF8, "application/json"));
+            return JsonSerializer.Deserialize<V2Options>(await resp.Content.ReadAsStringAsync());
+        }
+
+        // PostAsync sends a JSON body to a /v2 step and returns {ok,error,log}.
+        public async Task<V2Resp?> PostAsync(string path, object body)
+        {
+            string json = JsonSerializer.Serialize(body);
+            HttpResponseMessage resp = await _http.PostAsync(_base + path, new StringContent(json, Encoding.UTF8, "application/json"));
+            return JsonSerializer.Deserialize<V2Resp>(await resp.Content.ReadAsStringAsync());
+        }
+    }
 }

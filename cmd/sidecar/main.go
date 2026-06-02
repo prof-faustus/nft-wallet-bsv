@@ -62,6 +62,7 @@ func main() {
 	pass := flag.String("passphrase", "", "keystore passphrase (required)")
 	role := flag.String("role", "buyer", "seller|buyer")
 	demo := flag.Bool("demo", false, "drive the engine through the happy path on a timer (UI honesty demo; not a real exchange)")
+	simulate := flag.Bool("simulate", false, "TEST/DEMO ONLY: drive the menu API against an in-memory script-validating simulation node (NOT a real chain; never the default). Use --rpc-url for a real exchange.")
 	rpcURL := flag.String("rpc-url", "", "regtest node JSON-RPC URL; if set, enables LIVE on-chain actions")
 	rpcUser := flag.String("rpc-user", "nftbsv", "node RPC user")
 	rpcPass := flag.String("rpc-pass", "nftbsv-dev-rpc-password", "node RPC password")
@@ -82,8 +83,12 @@ func main() {
 	s := sidecar.New(w, engine.New(r), 1)
 	if *rpcURL != "" {
 		ad := svnode.New(svnode.Config{URL: *rpcURL, User: *rpcUser, Pass: *rpcPass})
-		s.EnableLiveActions(ad)
-		log.Printf("sidecar: LIVE on-chain actions enabled against %s", *rpcURL)
+		s.EnableLiveActions(ad) // v1 fixed-flow panel (kept for the legacy /action/* path)
+		s.EnableV2(ad)          // v2 menu-driven API the native shell uses — REAL node
+		log.Printf("sidecar: LIVE on-chain actions enabled against %s (menu API at /v2)", *rpcURL)
+	} else if *simulate {
+		s.EnableV2(sidecar.NewSimNode())
+		log.Printf("sidecar: SIMULATION mode (--simulate): /v2 menu API against an in-memory script-validating node. NOT a real chain; for trying the UI only.")
 	}
 	if *demo {
 		log.Printf("sidecar: --demo driving the engine through the happy path (UI honesty demo)")
