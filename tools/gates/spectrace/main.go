@@ -40,7 +40,7 @@ type manifest struct {
 }
 
 // idPattern matches the well-patterned normative IDs in docs/.
-var idPattern = regexp.MustCompile(`\b(I-NFT-\d+|HH-1|SC-1|PL-1|CN-1|NET-1|CH-1)\b`)
+var idPattern = regexp.MustCompile(`\b(I-NFT-\d+|I-CS-\d+|HH-1|SC-1|PL-1|CN-1|NET-1|CH-1)\b`)
 
 // annPattern matches a traceability annotation line, capturing kind
 // (impl|test) and the remainder (one or more space-separated IDs).
