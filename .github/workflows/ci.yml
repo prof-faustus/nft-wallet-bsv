@@ -88,13 +88,17 @@ jobs:
           docker compose -p nftbsv -f deploy/regtest/docker-compose.yml logs bsv-node || true
           exit 1
 
-      - name: run the live WS1/WS2 DoD tests (adapter + wallet)
+      - name: run the live DoD tests (adapter + wallet + token/M1)
         env:
           NFTBSV_RUN_LIVE: '1'
           NFTBSV_RPC_URL: http://127.0.0.1:18332/
           NFTBSV_RPC_USER: nftbsv
           NFTBSV_RPC_PASS: nftbsv-dev-rpc-password
-        run: go test -count=1 ./...
+        # -p 1 serializes package test binaries: the live tests share ONE
+        # regtest node + node wallet, so running them concurrently lets one
+        # package's MineBlocks/funding race another's swap (observed: a
+        # swap left in mempool). Serial execution is correct here.
+        run: go test -p 1 -count=1 ./...
 
       - name: logs on failure
         if: failure()
