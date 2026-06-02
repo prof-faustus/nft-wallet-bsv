@@ -83,40 +83,49 @@ func TestV2_EveryScheme_FullLifecycle(t *testing.T) {
 		t.Fatal("no schemes offered")
 	}
 
+	// FULL cross-product: every scheme × covenant {off, on}.
+	bptr := func(b bool) *bool { return &b }
 	for _, scheme := range schemes {
-		t.Run(scheme, func(t *testing.T) {
-			mustOK(t, post(t, base, "/v2/reset", resetReq{Scheme: scheme}), "reset")
-			mustOK(t, post(t, base, "/v2/keys", keysReq{
-				AliceLabel: "alice-" + scheme, BobLabel: "bob-" + scheme,
-			}), "keys")
-			mustOK(t, post(t, base, "/v2/fund", fundReq{Who: "alice", Sats: u64(6_000_000)}), "fund alice")
-			mustOK(t, post(t, base, "/v2/fund", fundReq{Who: "bob", Sats: u64(12_000_000)}), "fund bob")
-			mustOK(t, post(t, base, "/v2/mint", mintReq{
-				PayloadText: "secret NFT content for " + scheme, DustSats: u64(1), FeeSats: u64(100_000),
-			}), "mint")
-
-			// Bob opens + verifies (access transfer).
-			dl := post(t, base, "/v2/deliver", nil)
-			mustOK(t, dl, "deliver")
-			if m, ok := dl.Data.(map[string]any); ok {
-				if v, _ := m["verified"].(bool); !v {
-					t.Fatalf("%s: deliver did not verify", scheme)
-				}
+		for _, cov := range []bool{false, true} {
+			name := scheme
+			if cov {
+				name += "+covenant"
 			}
+			t.Run(name, func(t *testing.T) {
+				mustOK(t, post(t, base, "/v2/reset", resetReq{Scheme: scheme, UseCovenant: bptr(cov)}), "reset")
+				mustOK(t, post(t, base, "/v2/keys", keysReq{
+					AliceLabel: "alice-" + name, BobLabel: "bob-" + name,
+				}), "keys")
+				mustOK(t, post(t, base, "/v2/fund", fundReq{Who: "alice", Sats: u64(6_000_000)}), "fund alice")
+				mustOK(t, post(t, base, "/v2/fund", fundReq{Who: "bob", Sats: u64(12_000_000)}), "fund bob")
+				mustOK(t, post(t, base, "/v2/mint", mintReq{
+					PayloadText: "secret NFT content for " + name, DustSats: u64(1), FeeSats: u64(100_000),
+				}), "mint")
 
-			mustOK(t, post(t, base, "/v2/swap", swapReq{PriceSats: u64(2_000_000), FeeSats: u64(100_000)}), "swap")
-			mustOK(t, post(t, base, "/v2/confirm", confirmReq{Blocks: iptr(1)}), "confirm")
-
-			// Shred: after shredding, the seller cannot reopen.
-			sh := post(t, base, "/v2/shred", nil)
-			mustOK(t, sh, "shred")
-			if m, ok := sh.Data.(map[string]any); ok {
-				if v, _ := m["can_open_after"].(bool); v {
-					t.Fatalf("%s: seller could still open after shred", scheme)
+				// Bob opens + verifies (access transfer).
+				dl := post(t, base, "/v2/deliver", nil)
+				mustOK(t, dl, "deliver")
+				if m, ok := dl.Data.(map[string]any); ok {
+					if v, _ := m["verified"].(bool); !v {
+						t.Fatalf("%s: deliver did not verify", name)
+					}
 				}
-			}
-			mustOK(t, post(t, base, "/v2/attest", nil), "attest")
-		})
+
+				// Swap: when covenant is ON the sim node only accepts this
+				// because the OP_PUSH_TX token input validates — Script-enforced.
+				mustOK(t, post(t, base, "/v2/swap", swapReq{PriceSats: u64(2_000_000), FeeSats: u64(100_000)}), "swap")
+				mustOK(t, post(t, base, "/v2/confirm", confirmReq{Blocks: iptr(1)}), "confirm")
+
+				sh := post(t, base, "/v2/shred", nil)
+				mustOK(t, sh, "shred")
+				if m, ok := sh.Data.(map[string]any); ok {
+					if v, _ := m["can_open_after"].(bool); v {
+						t.Fatalf("%s: seller could still open after shred", name)
+					}
+				}
+				mustOK(t, post(t, base, "/v2/attest", nil), "attest")
+			})
+		}
 	}
 }
 
@@ -128,10 +137,12 @@ func TestV2_NoDefaults_RequireExplicitChoices(t *testing.T) {
 	defer srv.Close()
 	base := srv.URL
 
-	mustErr(t, post(t, base, "/v2/reset", resetReq{Scheme: ""}), "reset without scheme")
-	mustErr(t, post(t, base, "/v2/reset", resetReq{Scheme: "no-such-scheme"}), "reset unknown scheme")
+	bptr := func(b bool) *bool { return &b }
+	mustErr(t, post(t, base, "/v2/reset", resetReq{Scheme: "", UseCovenant: bptr(false)}), "reset without scheme")
+	mustErr(t, post(t, base, "/v2/reset", resetReq{Scheme: "no-such-scheme", UseCovenant: bptr(false)}), "reset unknown scheme")
+	mustErr(t, post(t, base, "/v2/reset", resetReq{Scheme: shred.DefaultScheme, UseCovenant: nil}), "reset without covenant choice")
 
-	mustOK(t, post(t, base, "/v2/reset", resetReq{Scheme: shred.DefaultScheme}), "reset")
+	mustOK(t, post(t, base, "/v2/reset", resetReq{Scheme: shred.DefaultScheme, UseCovenant: bptr(false)}), "reset")
 	mustOK(t, post(t, base, "/v2/keys", keysReq{AliceLabel: "a", BobLabel: "b"}), "keys")
 
 	// fund with no amount → error (user must choose).
@@ -153,7 +164,8 @@ func TestV2_OrderingPreconditions(t *testing.T) {
 	srv := newV2Server(t)
 	defer srv.Close()
 	base := srv.URL
-	mustOK(t, post(t, base, "/v2/reset", resetReq{Scheme: shred.DefaultScheme}), "reset")
+	cf := false
+	mustOK(t, post(t, base, "/v2/reset", resetReq{Scheme: shred.DefaultScheme, UseCovenant: &cf}), "reset")
 	// swap/deliver/mint before their prerequisites must error.
 	mustErr(t, post(t, base, "/v2/mint", mintReq{PayloadText: "x", DustSats: u64(1), FeeSats: u64(1)}), "mint before keys")
 	mustErr(t, post(t, base, "/v2/deliver", nil), "deliver before mint")

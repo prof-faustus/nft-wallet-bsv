@@ -29,16 +29,19 @@ import (
 	ec "github.com/bsv-blockchain/go-sdk/primitives/ec"
 	"github.com/bsv-blockchain/go-sdk/script"
 	"github.com/prof-faustus/nft-wallet-bsv/internal/chain"
+	"github.com/prof-faustus/nft-wallet-bsv/internal/covenant"
 	"github.com/prof-faustus/nft-wallet-bsv/internal/deletion"
 	"github.com/prof-faustus/nft-wallet-bsv/internal/engine"
 	"github.com/prof-faustus/nft-wallet-bsv/internal/shred"
 	"github.com/prof-faustus/nft-wallet-bsv/internal/token"
+	"github.com/prof-faustus/nft-wallet-bsv/internal/wallet"
 )
 
 // v2Session holds one user-driven exchange. Every field is populated by an
 // explicit user action; nothing is pre-set.
 type v2Session struct {
-	scheme string // chosen crypto-shred scheme (required)
+	scheme      string // chosen crypto-shred scheme (required)
+	useCovenant bool   // user choice: Script-enforce continuity via OP_PUSH_TX
 
 	aliceLabel, bobLabel string
 	aliceKey, bobKey     *ec.PrivateKey
@@ -110,12 +113,16 @@ func (s *Server) v2JSON(fn func(context.Context, json.RawMessage) (any, error)) 
 // v2Options serves the menus so the UI never hard-codes choices.
 func (s *Server) v2Options(w http.ResponseWriter, _ *http.Request) {
 	type opt struct {
-		Schemes       []string `json:"schemes"`
-		DefaultScheme string   `json:"default_scheme_note"`
+		Schemes            []string `json:"schemes"`
+		DefaultScheme      string   `json:"default_scheme_note"`
+		CovenantSelectable bool     `json:"covenant_selectable"`
+		CovenantNote       string   `json:"covenant_note"`
 	}
 	writeJSON(w, v2Resp{OK: true, Data: opt{
-		Schemes:       shred.Names(),
-		DefaultScheme: "none — the user must choose a scheme explicitly",
+		Schemes:            shred.Names(),
+		DefaultScheme:      "none — the user must choose a scheme explicitly",
+		CovenantSelectable: true,
+		CovenantNote:       "off = convention-enforced continuity; on = OP_PUSH_TX covenant (Script-enforced, cannot be stripped). The user chooses.",
 	}})
 }
 
@@ -139,7 +146,8 @@ func (s *Server) v2log() []string {
 // ---- requests (pointers/strings so "absent" is detectable) ---------------
 
 type resetReq struct {
-	Scheme string `json:"scheme"`
+	Scheme      string `json:"scheme"`
+	UseCovenant *bool  `json:"use_covenant"` // required: the user must choose on/off
 }
 
 func (s *Server) v2Reset(_ context.Context, body json.RawMessage) (any, error) {
@@ -153,14 +161,24 @@ func (s *Server) v2Reset(_ context.Context, body json.RawMessage) (any, error) {
 	if _, err := shred.ForName(req.Scheme); err != nil {
 		return nil, fmt.Errorf("unknown scheme %q; choose one of %v", req.Scheme, shred.Names())
 	}
+	if req.UseCovenant == nil {
+		return nil, fmt.Errorf("use_covenant is required — choose true (Script-enforced) or false (no default)")
+	}
 	s.mu.Lock()
-	s.v2 = &v2Session{scheme: req.Scheme}
+	s.v2 = &v2Session{scheme: req.Scheme, useCovenant: *req.UseCovenant}
 	s.eng = engine.New(s.eng.Role())
 	s.curDepth = 0
 	s.attest = deletion.AttestAbsent
 	s.mu.Unlock()
-	s.v2logf("Session reset. Crypto-shred scheme = %q (chosen by the user).", req.Scheme)
-	return map[string]string{"scheme": req.Scheme}, nil
+	s.v2logf("Session reset. Scheme = %q; continuity = %s (both chosen by the user).", req.Scheme, covLabel(*req.UseCovenant))
+	return map[string]any{"scheme": req.Scheme, "use_covenant": *req.UseCovenant}, nil
+}
+
+func covLabel(on bool) string {
+	if on {
+		return "OP_PUSH_TX covenant (Script-enforced)"
+	}
+	return "convention-enforced"
 }
 
 type keysReq struct {
@@ -283,32 +301,45 @@ func (s *Server) v2Mint(ctx context.Context, body json.RawMessage) (any, error) 
 	if err != nil {
 		return nil, fmt.Errorf("find alice funding: %w", err)
 	}
-	mr, err := token.Mint(token.MintParams{
-		Funding:    []token.FundingInput{{TxID: ex.aliceFundTxid, Vout: aliceVout, LockingScript: aliceLock, Sats: ex.aliceFundSats}},
-		OwnerKey:   ex.aliceKey,
-		Descriptor: ex.descr, HPayload: ex.hp, DustSats: *req.DustSats,
-		ChangeAddr: ex.aliceAddr, ChangeSats: ex.aliceFundSats - *req.DustSats - *req.FeeSats,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("mint: %w", err)
+	funding := []token.FundingInput{{TxID: ex.aliceFundTxid, Vout: aliceVout, LockingScript: aliceLock, Sats: ex.aliceFundSats}}
+	change := ex.aliceFundSats - *req.DustSats - *req.FeeSats
+	var mintBuilder *wallet.Builder
+	if ex.useCovenant {
+		mr, err := covenant.MintCovenant(covenant.MintCovenantParams{
+			Funding: funding, OwnerKey: ex.aliceKey, Descriptor: ex.descr, HPayload: ex.hp,
+			TokenValue: *req.DustSats, ChangeAddr: ex.aliceAddr, ChangeSats: change,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("covenant mint: %w", err)
+		}
+		mintBuilder, ex.tokenId, ex.lockHex = mr.Builder, mr.TokenId, mr.LockScriptHex
+	} else {
+		mr, err := token.Mint(token.MintParams{
+			Funding: funding, OwnerKey: ex.aliceKey, Descriptor: ex.descr, HPayload: ex.hp,
+			DustSats: *req.DustSats, ChangeAddr: ex.aliceAddr, ChangeSats: change,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("mint: %w", err)
+		}
+		mintBuilder, ex.tokenId, ex.lockHex = mr.Builder, mr.TokenId, mr.LockScriptHex
 	}
-	if err := mr.Builder.Sign(); err != nil {
+	ex.dustSats = *req.DustSats
+	if err := mintBuilder.Sign(); err != nil {
 		return nil, err
 	}
-	mintHex, _ := mr.Builder.Hex()
+	mintHex, _ := mintBuilder.Hex()
 	if ex.mintTxid, err = s.ad.Broadcast(ctx, mintHex); err != nil {
 		return nil, fmt.Errorf("mint broadcast: %w", err)
 	}
 	if _, err = s.ad.MineBlocks(ctx, 1); err != nil {
 		return nil, err
 	}
-	ex.tokenId, ex.lockHex, ex.dustSats = mr.TokenId, mr.LockScriptHex, *req.DustSats
 	for _, e := range []engine.EventType{engine.EvStartPairing, engine.EvHelloAckValid, engine.EvOffer, engine.EvAcceptMatches, engine.EvPayloadDeliveredOK, engine.EvSwapAssembled, engine.EvTermsVerifyOK} {
 		if err = s.Advance(e); err != nil {
 			return nil, err
 		}
 	}
-	s.v2logf("MINTED token %s… in %s (one live UTXO). Ready to sign the swap.", hex.EncodeToString(mr.TokenId)[:16], ex.mintTxid)
+	s.v2logf("MINTED token %s… in %s (one live UTXO; continuity=%s). Ready to sign the swap.", hex.EncodeToString(ex.tokenId)[:16], ex.mintTxid, covLabel(ex.useCovenant))
 	return map[string]any{"token_id": hex.EncodeToString(ex.tokenId), "mint_txid": ex.mintTxid}, nil
 }
 
@@ -358,15 +389,27 @@ func (s *Server) v2Swap(ctx context.Context, body json.RawMessage) (any, error) 
 	if err != nil {
 		return nil, fmt.Errorf("find bob payment: %w", err)
 	}
-	sp := token.SwapParams{
-		TokenPrevTxID: ex.mintTxid, TokenPrevVout: 0, TokenLockScript: ex.lockHex, DustSats: ex.dustSats,
-		TokenId: ex.tokenId, Descriptor: ex.descr, HPayload: ex.hp, BobOwnerPKH: ex.bobPKH,
-		AliceAddr: ex.aliceAddr, PriceSats: *req.PriceSats,
-		Payments:      []token.PaymentInput{{TxID: ex.bobFundTxid, Vout: bobVout, LockingScript: bobLock, Sats: ex.bobFundSats}},
-		BobChangeAddr: ex.bobAddr, ChangeSats: ex.bobFundSats - *req.PriceSats - *req.FeeSats,
-	}
+	payments := []token.PaymentInput{{TxID: ex.bobFundTxid, Vout: bobVout, LockingScript: bobLock, Sats: ex.bobFundSats}}
+	change := ex.bobFundSats - *req.PriceSats - *req.FeeSats
 	exp := token.SwapExpectation{TokenId: ex.tokenId, Descriptor: ex.descr, HPayload: ex.hp, BobOwnerPKH: ex.bobPKH, AliceAddr: ex.aliceAddr, PriceSats: *req.PriceSats, DustSats: ex.dustSats, MaxOutputs: 3}
-	b, err := token.AssembleSwap(sp, ex.aliceKey, ex.bobKey)
+	var b *wallet.Builder
+	if ex.useCovenant {
+		// The token input is the covenant UTXO, spent via OP_PUSH_TX; the
+		// successor token output is Script-FORCED to preserve identity/value.
+		b, err = covenant.AssembleCovenantSwap(covenant.CovenantSwapParams{
+			TokenPrevTxID: ex.mintTxid, TokenPrevVout: 0,
+			TokenId: ex.tokenId, Descriptor: ex.descr, HPayload: ex.hp, TokenValue: ex.dustSats,
+			BobOwnerPKH: ex.bobPKH, SellerAddr: ex.aliceAddr, PriceSats: *req.PriceSats,
+			Payments: payments, BobChangeAddr: ex.bobAddr, ChangeSats: change,
+		}, ex.bobKey)
+	} else {
+		b, err = token.AssembleSwap(token.SwapParams{
+			TokenPrevTxID: ex.mintTxid, TokenPrevVout: 0, TokenLockScript: ex.lockHex, DustSats: ex.dustSats,
+			TokenId: ex.tokenId, Descriptor: ex.descr, HPayload: ex.hp, BobOwnerPKH: ex.bobPKH,
+			AliceAddr: ex.aliceAddr, PriceSats: *req.PriceSats,
+			Payments: payments, BobChangeAddr: ex.bobAddr, ChangeSats: change,
+		}, ex.aliceKey, ex.bobKey)
+	}
 	if err != nil {
 		return nil, err
 	}

@@ -109,11 +109,18 @@ guarantee is the byte-exact hashOutputs check after a successful CHECKSIG.
 broadcast is validated through the real interpreter, so bad sigs / covenant
 violations are rejected exactly as a node would).
 
-- **TestV2_EveryScheme_FullLifecycle** — for EVERY scheme, the whole flow runs
-  end to end: reset → keys → fund seller → fund buyer → mint(seal) →
-  deliver(buyer opens + verifies H(plaintext)) → swap → confirm → shred → attest.
+- **TestV2_EveryScheme_FullLifecycle** — the FULL cross-product **5 schemes ×
+  covenant {off, on}** (10 combinations) each run end to end: reset → keys →
+  fund seller → fund buyer → mint(seal) → deliver(buyer opens + verifies
+  H(plaintext)) → swap → confirm → shred → attest. With covenant ON the swap's
+  token input is the OP_PUSH_TX covenant spend, which the sim node only accepts
+  because the Script validates — Script-enforced continuity in the real flow.
+- **TestCovenantSwap_FaithfulValidates / TestCovenantSwap_TamperedOut0Rejected**
+  (`internal/covenant`) — a faithful covenant swap validates both inputs in the
+  interpreter; stripping or redirecting the successor token output is REJECTED.
 - **TestV2_NoDefaults_RequireExplicitChoices** — every omitted required input is
-  an ERROR (no scheme, no funding amount, no dust/fee, no payload, no blocks).
+  an ERROR (no scheme, no covenant choice, no funding amount, no dust/fee, no
+  payload, no blocks).
 - **TestV2_OrderingPreconditions** — each step refuses to run before its
   prerequisites.
 - **Running-binary check** (manual, reproducible): `--simulate` sidecar drives

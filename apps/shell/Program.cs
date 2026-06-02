@@ -35,6 +35,7 @@ namespace NftWalletBsv.Shell
         private readonly SidecarV2 _v2;
 
         private readonly ComboBox _scheme = new ComboBox { Width = 200 };
+        private readonly ComboBox _continuity = new ComboBox { Width = 300 };
         private readonly TextBox _aliceLabel = Tb("seller");
         private readonly TextBox _bobLabel = Tb("buyer");
         private readonly TextBox _aliceFund = Tb("");
@@ -68,10 +69,11 @@ namespace NftWalletBsv.Shell
             var root = new StackPanel { Margin = new Thickness(16) };
             root.Children.Add(Bold("Every choice is yours — pick a scheme, type every amount, run each step. Nothing is preselected."));
 
-            // 1 — scheme + reset
-            var bReset = Btn("1 · Start session with this scheme");
-            bReset.Click += async (s, e) => await Step(bReset, "/v2/reset", new { scheme = SelectedScheme() });
-            root.Children.Add(Row("Crypto-shred scheme:", _scheme, bReset));
+            // 1 — scheme + continuity + reset (both are explicit choices)
+            var bReset = Btn("1 · Start session");
+            bReset.Click += async (s, e) => await Step(bReset, "/v2/reset", new { scheme = SelectedScheme(), use_covenant = ContinuityChoice() });
+            root.Children.Add(Row("Crypto-shred scheme:", _scheme));
+            root.Children.Add(Row("Continuity:", _continuity, bReset));
 
             // 2 — keys
             var bKeys = Btn("2 · Create keys");
@@ -132,6 +134,15 @@ namespace NftWalletBsv.Shell
 
         private string SelectedScheme() => _scheme.SelectedItem as string ?? "";
 
+        // ContinuityChoice returns true/false from the menu, or null when the
+        // user hasn't chosen — the sidecar then refuses (no default).
+        private bool? ContinuityChoice() => _continuity.SelectedIndex switch
+        {
+            0 => false, // convention-enforced
+            1 => true,  // OP_PUSH_TX covenant (Script-enforced)
+            _ => null,
+        };
+
         private async Task LoadOptionsAsync()
         {
             try
@@ -142,7 +153,11 @@ namespace NftWalletBsv.Shell
                     foreach (var name in o.data.schemes) _scheme.Items.Add(name);
                 // No default selection — the user MUST choose (owner rule).
                 _scheme.SelectedIndex = -1;
-                Append("Loaded " + (_scheme.Items.Count) + " scheme(s) from the sidecar. Choose one to begin.");
+                _continuity.Items.Clear();
+                _continuity.Items.Add("convention-enforced (off)");
+                _continuity.Items.Add("OP_PUSH_TX covenant (Script-enforced)");
+                _continuity.SelectedIndex = -1; // no default — the user chooses
+                Append("Loaded " + (_scheme.Items.Count) + " scheme(s) + continuity options. Choose a scheme AND a continuity mode to begin.");
             }
             catch (Exception ex) { Append("Could not load options (is the sidecar running?): " + ex.Message); }
         }

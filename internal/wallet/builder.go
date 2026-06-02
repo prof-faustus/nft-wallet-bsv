@@ -79,6 +79,20 @@ func (b *Builder) SetInputSigner(idx int, key *ec.PrivateKey, flag sighash.Flag)
 	return nil
 }
 
+// SetInputUnlockingScript sets a RAW unlocking script on an already-added
+// input (the input must have been added without a signing template). This
+// is how non-P2PKH spends — e.g. the OP_PUSH_TX covenant unlock
+// (<preimage> <ownerPKH>) — provide their unlocking script directly.
+// Sign() leaves such inputs untouched (it only fills templated inputs), so
+// the manual script survives finalisation.
+func (b *Builder) SetInputUnlockingScript(idx int, unlocking []byte) error {
+	if idx < 0 || idx >= b.tx.InputCount() {
+		return fmt.Errorf("builder: input %d out of range", idx)
+	}
+	b.tx.InputIdx(idx).UnlockingScript = script.NewFromBytes(unlocking)
+	return nil
+}
+
 // AddP2PKHOutput locks sats to a P2PKH address.
 func (b *Builder) AddP2PKHOutput(addr string, sats uint64) error {
 	a, err := script.NewAddressFromString(addr)
