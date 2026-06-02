@@ -122,3 +122,15 @@ Decisions made by the project owner to start the run. Recorded here per
 
 OD-5 (carrier A), OD-8 (transport pluggable), OD-3 (covenant deferred), OD-6/OD-7 (off),
 OD-1 (HH-1 baseline) remain at their RUN_PLAN §C defaults until their gating phase.
+
+### Implementation assumption — mintOutpoint (WS3)
+
+`docs/02 §2.2` defines `TokenId = H(mintOutpoint || ownerPubKey || descriptor
+|| H(payload))` but leaves `mintOutpoint` to define. **Resolved (2026-06-02):**
+`mintOutpoint` is the **first funding input's outpoint** of the mint
+transaction — a pre-existing, already-globally-unique UTXO. Using the token's
+own outpoint would be self-referential (the TokenId sits inside out 0's
+locking script, which determines the mint txid, which determines that
+outpoint). Binding a spent funding outpoint preserves global uniqueness (it
+can be spent exactly once). Classified: implementation assumption; testable
+(`internal/token`); no security claim beyond uniqueness.

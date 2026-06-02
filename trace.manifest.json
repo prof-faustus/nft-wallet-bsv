@@ -1,15 +1,15 @@
 {
   "_comment": "Spec-traceability manifest (docs/05 §5.2, docs/06 §6.5). Every normative ID in docs/ is listed here with a status. status=active means the gate REQUIRES >=1 impl annotation (//trace:impl <ID>) AND >=1 test annotation (//trace:test <ID>) in the codebase; status=planned means the ID belongs to a future workstream and is not yet required. The gate also fails on (a) a docs ID missing from this manifest, and (b) a code //trace: annotation referencing an ID absent from docs. As each workstream lands its IDs, flip them planned -> active in the same change. WS0 implements no I-NFT-*/trust IDs, so all are 'planned' here; the mechanism and gate are proven to bite via the WS0 DoD plant.",
   "ids": {
-    "I-NFT-1": { "status": "planned", "ws": "WS3", "desc": "No OP_RETURN in the token carrier; data via push-drop" },
-    "I-NFT-2": { "status": "planned", "ws": "WS3", "desc": "Swap out 0 reproduces token identity byte-for-byte" },
-    "I-NFT-3": { "status": "planned", "ws": "WS3", "desc": "Mint yields exactly one live token UTXO" },
-    "I-NFT-4": { "status": "planned", "ws": "WS3", "desc": "No taken-payment-without-token state in Tx_swap" },
-    "I-NFT-5": { "status": "planned", "ws": "WS3", "desc": "Token value/owner invariant across transfer" },
+    "I-NFT-1": { "status": "active", "ws": "WS3", "desc": "No OP_RETURN in the token carrier; data via push-drop" },
+    "I-NFT-2": { "status": "active", "ws": "WS3", "desc": "Swap out 0 reproduces token identity byte-for-byte" },
+    "I-NFT-3": { "status": "active", "ws": "WS3", "desc": "Mint yields exactly one live token UTXO" },
+    "I-NFT-4": { "status": "active", "ws": "WS3", "desc": "No taken-payment-without-token state in Tx_swap" },
+    "I-NFT-5": { "status": "active", "ws": "WS3", "desc": "Token value/owner invariant across transfer" },
     "HH-1": { "status": "planned", "ws": "WS6", "desc": "Honest-host assumption (TEE stand-in)" },
     "SC-1": { "status": "active", "ws": "WS2", "desc": "Software key custody via OS keystore/DPAPI" },
     "PL-1": { "status": "planned", "ws": "WS6", "desc": "Payload confidentiality NOT provided in Stage 1" },
-    "CN-1": { "status": "planned", "ws": "WS3", "desc": "Continuity convention-enforced unless covenant (OD-3)" },
+    "CN-1": { "status": "active", "ws": "WS3", "desc": "Continuity convention-enforced unless covenant (OD-3)" },
     "NET-1": { "status": "planned", "ws": "WS4", "desc": "Authenticated secure channel over hostile transport" },
     "CH-1": { "status": "active", "ws": "WS1", "desc": "SPV verification path; reorg surfaced not hidden" }
   }
