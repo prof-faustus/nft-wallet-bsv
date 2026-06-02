@@ -20,7 +20,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.23'
+          go-version: '1.25'
 
       - name: build the Go sidecar + gate tooling
         run: go build ./...
@@ -55,7 +55,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.23'
+          go-version: '1.25'
       # Live (NFTBSV_RUN_LIVE) tests self-skip without the env, so this is
       # the hermetic unit suite (incl. the offline SPV/CH-1 verification).
       - run: go test ./...
@@ -69,7 +69,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.23'
+          go-version: '1.25'
 
       - name: bring up the SV Node regtest (deploy/regtest)
         run: docker compose -p nftbsv -f deploy/regtest/docker-compose.yml up -d
@@ -88,13 +88,13 @@ jobs:
           docker compose -p nftbsv -f deploy/regtest/docker-compose.yml logs bsv-node || true
           exit 1
 
-      - name: run the live WS1 DoD tests through the adapter
+      - name: run the live WS1/WS2 DoD tests (adapter + wallet)
         env:
           NFTBSV_RUN_LIVE: '1'
           NFTBSV_RPC_URL: http://127.0.0.1:18332/
           NFTBSV_RPC_USER: nftbsv
           NFTBSV_RPC_PASS: nftbsv-dev-rpc-password
-        run: go test -count=1 -v ./internal/chain/svnode/
+        run: go test -count=1 ./...
 
       - name: logs on failure
         if: failure()

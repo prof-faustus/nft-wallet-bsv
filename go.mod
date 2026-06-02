@@ -6,4 +6,11 @@
 // appear in this graph — the `bsv-only` gate (docs/05 §5.2) enforces it.
 module github.com/prof-faustus/nft-wallet-bsv
 
-go 1.23
+go 1.25.0
+
+require (
+	github.com/bsv-blockchain/go-sdk v1.2.24
+	golang.org/x/crypto v0.52.0
+)
+
+require github.com/pkg/errors v0.9.1 // indirect

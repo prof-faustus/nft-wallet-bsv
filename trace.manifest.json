@@ -7,7 +7,7 @@
     "I-NFT-4": { "status": "planned", "ws": "WS3", "desc": "No taken-payment-without-token state in Tx_swap" },
     "I-NFT-5": { "status": "planned", "ws": "WS3", "desc": "Token value/owner invariant across transfer" },
     "HH-1": { "status": "planned", "ws": "WS6", "desc": "Honest-host assumption (TEE stand-in)" },
-    "SC-1": { "status": "planned", "ws": "WS2", "desc": "Software key custody via OS keystore/DPAPI" },
+    "SC-1": { "status": "active", "ws": "WS2", "desc": "Software key custody via OS keystore/DPAPI" },
     "PL-1": { "status": "planned", "ws": "WS6", "desc": "Payload confidentiality NOT provided in Stage 1" },
     "CN-1": { "status": "planned", "ws": "WS3", "desc": "Continuity convention-enforced unless covenant (OD-3)" },
     "NET-1": { "status": "planned", "ws": "WS4", "desc": "Authenticated secure channel over hostile transport" },
