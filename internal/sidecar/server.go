@@ -42,6 +42,7 @@ type Server struct {
 	actMu sync.Mutex // serializes live actions (one button at a time)
 	ad    liveAdapter
 	ex    *exchange
+	v2    *v2Session // parameter-driven exchange (EnableV2)
 }
 
 // New builds a sidecar over a wallet + engine.
