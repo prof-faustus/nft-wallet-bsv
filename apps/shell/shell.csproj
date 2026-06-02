@@ -1,0 +1,17 @@
+<!-- WS7: the native Windows shell (OD-2). A .NET 8 WPF app that renders
+     what the Go sidecar reports and holds NO keys (non-custodial; keys
+     live only in the sidecar, docs/01 §1.6, docs/06 WS7). UI built in
+     code-behind (no XAML) to keep the surface small and reviewable.
+     Built/verified in CI on a windows runner (.NET SDK). -->
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <RootNamespace>NftWalletBsv.Shell</RootNamespace>
+    <AssemblyName>nft-wallet-bsv-shell</AssemblyName>
+  </PropertyGroup>
+</Project>

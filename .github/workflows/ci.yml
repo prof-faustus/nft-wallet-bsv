@@ -107,3 +107,16 @@ jobs:
       - name: tear down
         if: always()
         run: docker compose -p nftbsv -f deploy/regtest/docker-compose.yml down -v || true
+
+  dotnet-shell:
+    name: build .NET/C# shell (WS7 compile-verify)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      # Compile-verifies the WPF shell (the human-driven E2E-8-through-UI
+      # acceptance, M4, is run by an operator — see
+      # docs/runbooks/running-the-shell.md).
+      - run: dotnet build apps/shell/shell.csproj -c Release

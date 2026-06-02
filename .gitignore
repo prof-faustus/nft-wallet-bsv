@@ -16,6 +16,11 @@ bin/
 *.test
 *.out
 
+# .NET (the WS7 shell)
+**/obj/
+**/bin/
+*.user
+
 # Secrets / keys / wallets — NEVER commit
 *.key
 *.pem
