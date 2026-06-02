@@ -25,6 +25,9 @@ bin/
 *.key
 *.pem
 *.wallet
+# Encrypted keystores (sidecar/demo). Never commit, even sim ones.
+*ks.json
+*keystore*.json
 .env
 .env.*
 secrets/
