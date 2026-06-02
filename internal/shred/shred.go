@@ -41,12 +41,13 @@ const (
 // post-swap view includes that material.)
 type Sealed struct {
 	Scheme      string
-	Ciphertext  []byte // AEAD(K, payload), or AEAD(KEK, payload) for reencrypt
-	WrappedKey  []byte // AEAD(KEK, K) for ecdh/tee; empty otherwise
-	EphPub      []byte // ephemeral pubkey (ecdh/reencrypt/tee)
-	Surrender   []byte // secret revealed by the swap (key-surrender)
-	EnclavePub  []byte // tee-attested: the (stand-in) enclave pubkey
-	Attestation []byte // tee-attested: DER sig over the release/zeroize statement
+	Ciphertext  []byte   // AEAD(K, payload), or AEAD(KEK, payload) for reencrypt
+	WrappedKey  []byte   // AEAD(KEK, K) for ecdh/tee; empty otherwise
+	EphPub      []byte   // ephemeral pubkey (ecdh/reencrypt/tee)
+	Surrender   []byte   // secret revealed by the swap (key-surrender)
+	EnclavePub  []byte   // tee-attested: the (stand-in) enclave pubkey
+	Attestation []byte   // tee-attested: DER sig over the release/zeroize statement
+	Shares      [][]byte // threshold: the t dealerless shares delivered to Bob
 }
 
 // SellerSecret is what Alice must SHRED. Shred() nils the recovery path
@@ -96,6 +97,7 @@ var registry = map[string]func() Scheme{
 	"key-surrender":  func() Scheme { return keySurrender{} },
 	"reencrypt":      func() Scheme { return reencrypt{} },
 	"tee-attested":   func() Scheme { return teeAttested{} },
+	"threshold":      func() Scheme { return thresholdScheme{} },
 }
 
 // ForName returns the scheme by id.

@@ -111,7 +111,7 @@ func TestAttestationOnlyEnforced(t *testing.T) {
 	if VerifyTEEAttestation(sealed, other.PubKey()) {
 		t.Fatal("tee attestation verified for the wrong recipient")
 	}
-	for _, name := range []string{"ecdh-singleuse", "key-surrender", "reencrypt"} {
+	for _, name := range []string{"ecdh-singleuse", "key-surrender", "reencrypt", "threshold"} {
 		sc, _ := ForName(name)
 		if sc.Strength() != Cooperative {
 			t.Fatalf("%s must be Cooperative", name)
@@ -124,13 +124,43 @@ func TestAttestationOnlyEnforced(t *testing.T) {
 }
 
 func TestRegistry(t *testing.T) {
-	if len(Names()) != 4 {
-		t.Fatalf("want 4 schemes, got %v", Names())
+	if len(Names()) != 5 {
+		t.Fatalf("want 5 schemes, got %v", Names())
 	}
 	if _, err := ForName(DefaultScheme); err != nil {
 		t.Fatalf("default scheme: %v", err)
 	}
 	if _, err := ForName("nope"); err == nil {
 		t.Fatal("unknown scheme accepted")
+	}
+}
+
+// I-CS-4: the dealerless-threshold scheme distributes K as t-of-n shares;
+// Bob reconstructs from the t shares the swap delivers (no recipient key),
+// and FEWER than t shares cannot recover the payload.
+//
+//trace:test I-CS-4
+func TestThresholdSchemeSharing(t *testing.T) {
+	sc, err := ForName("threshold")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bob, _ := ec.NewPrivateKey()
+	sealed, _, err := sc.Seal(payload, bob.PubKey())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sealed.Shares) != thresholdT {
+		t.Fatalf("want %d shares delivered, got %d", thresholdT, len(sealed.Shares))
+	}
+	// Bob reconstructs from the t shares — his private key is irrelevant.
+	out, err := sc.Open(sealed, nil)
+	if err != nil || !bytes.Equal(out, payload) {
+		t.Fatalf("threshold open: %v / %q", err, out)
+	}
+	// One fewer than t shares cannot reconstruct K.
+	short := &Sealed{Scheme: "threshold", Ciphertext: sealed.Ciphertext, Shares: sealed.Shares[:thresholdT-1]}
+	if _, err := sc.Open(short, nil); err == nil {
+		t.Fatalf("opened with only %d shares — threshold broken", thresholdT-1)
 	}
 }

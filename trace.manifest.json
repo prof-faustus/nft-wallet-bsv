@@ -14,6 +14,7 @@
     "CH-1": { "status": "active", "ws": "WS1", "desc": "SPV verification path; reorg surfaced not hidden" },
     "I-CS-1": { "status": "active", "ws": "S2", "desc": "Retained ciphertext useless without K; K not recoverable from ciphertext+binding alone" },
     "I-CS-2": { "status": "active", "ws": "S2", "desc": "Post-swap Bob can always derive K and decrypt (access transfer)" },
-    "I-CS-3": { "status": "active", "ws": "S2", "desc": "Enforced (TEE) shred is attested, not assumed; cooperative schemes are not enforced" }
+    "I-CS-3": { "status": "active", "ws": "S2", "desc": "Enforced (TEE) shred is attested, not assumed; cooperative schemes are not enforced" },
+    "I-CS-4": { "status": "active", "ws": "S2", "desc": "Dealerless t-of-n threshold sharing of K; t reconstructs, t-1 reveals nothing; reconstruct-to-use" }
   }
 }

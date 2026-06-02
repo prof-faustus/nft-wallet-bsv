@@ -1,12 +1,15 @@
-// The four crypto-shred schemes (docs/08 §8.3). All are selectable via
+// The five crypto-shred schemes (docs/08 §8.3). All are selectable via
 // shred.ForName. See package doc for the honest strength classification.
 package shred
 
 import (
+	"encoding/binary"
 	"fmt"
+	"math/big"
 
 	ec "github.com/bsv-blockchain/go-sdk/primitives/ec"
 	"github.com/prof-faustus/nft-wallet-bsv/internal/crypto"
+	"github.com/prof-faustus/nft-wallet-bsv/internal/threshold"
 )
 
 // ---- 1. ecdh-singleuse (default; COOPERATIVE) ----------------------------
@@ -230,4 +233,101 @@ func VerifyTEEAttestation(s *Sealed, bobPub *ec.PublicKey) bool {
 
 func attStatement(bobPub *ec.PublicKey, ct []byte) []byte {
 	return kdf("nftbsv/tee/v1|released+zeroized|", append(bobPub.Compressed(), ct...))
+}
+
+// ---- 5. threshold (COOPERATIVE; dealerless t-of-n distributed custody) ---
+//
+// The content key K is NOT a freshly chosen AES key but the 32-byte
+// big-endian encoding of a DEALERLESS threshold secret over the secp256k1
+// order N (internal/threshold): no single party — not even Alice — ever
+// holds K alone at generation time; it exists only as t-of-n Shamir shares
+// summed across independently-contributing parties. The swap delivers t
+// shares to Bob, who RECONSTRUCTS K (reconstruct-to-use) and AEAD-opens the
+// payload. Alice shreds her shares + K.
+//
+// Honest scope (mirrors internal/threshold's package doc): this is
+// dealerless threshold key GENERATION + SHARING, NOT interactive threshold
+// ECDSA SIGNING. The reconstructed scalar IS a usable secp256k1 key (proven
+// in tests), but we never run a GG/FROST-class MtA signing protocol — that
+// must not be hand-rolled. Strength is COOPERATIVE: distributing custody
+// raises the bar (t honest custodians must collude to recover early) but,
+// like every Stage-1 scheme, it does not PROVE Alice destroyed her copy.
+//
+//trace:impl I-CS-4
+type thresholdScheme struct{}
+
+func (thresholdScheme) Name() string       { return "threshold" }
+func (thresholdScheme) Strength() Strength { return Cooperative }
+
+// thresholdT/N are the sharing parameters: a 2-of-3 dealerless scheme with
+// 2 independently-contributing parties. Named, not magic (docs/08 §8.3).
+const (
+	thresholdT       = 2 // shares required to reconstruct K
+	thresholdN       = 3 // total shares produced
+	thresholdParties = 2 // independent dealerless contributors
+)
+
+func (thresholdScheme) Seal(payload []byte, _ *ec.PublicKey) (*Sealed, *SellerSecret, error) {
+	group, shares, err := threshold.DealerlessGenerate(thresholdT, thresholdN, thresholdParties)
+	if err != nil {
+		return nil, nil, err
+	}
+	k := make([]byte, crypto.KeyLen) // K = 32-byte big-endian of the group scalar
+	group.FillBytes(k)
+	ct, err := crypto.AEADSeal(k, payload)
+	if err != nil {
+		return nil, nil, err
+	}
+	// The swap delivers exactly t shares to Bob (the minimum to reconstruct).
+	delivered := make([][]byte, thresholdT)
+	for i := 0; i < thresholdT; i++ {
+		delivered[i] = encodeShare(shares[i])
+	}
+	sealed := &Sealed{Scheme: "threshold", Ciphertext: ct, Shares: delivered}
+	secret := &SellerSecret{
+		zeroize: []func(){func() { zero(k) }},
+		recover: func(s *Sealed) ([]byte, error) { return crypto.AEADOpen(k, s.Ciphertext) },
+	}
+	return sealed, secret, nil
+}
+
+func (thresholdScheme) Open(s *Sealed, _ *ec.PrivateKey) ([]byte, error) {
+	if len(s.Shares) < thresholdT {
+		return nil, fmt.Errorf("open: have %d shares, need %d to reconstruct K", len(s.Shares), thresholdT)
+	}
+	shares := make([]threshold.Share, 0, len(s.Shares))
+	for _, b := range s.Shares {
+		sh, err := decodeShare(b)
+		if err != nil {
+			return nil, fmt.Errorf("open: decode share: %w", err)
+		}
+		shares = append(shares, sh)
+	}
+	group, err := threshold.Reconstruct(shares)
+	if err != nil {
+		return nil, fmt.Errorf("open: reconstruct K: %w", err)
+	}
+	k := make([]byte, crypto.KeyLen)
+	group.FillBytes(k)
+	return crypto.AEADOpen(k, s.Ciphertext)
+}
+
+// encodeShare serialises a share as 2-byte big-endian X || 32-byte
+// big-endian Y. X is a small positive index; Y is a scalar mod N (< 2^256),
+// so 32 bytes via FillBytes is exact and fixed-width.
+func encodeShare(sh threshold.Share) []byte {
+	out := make([]byte, 2+32)
+	binary.BigEndian.PutUint16(out[:2], uint16(sh.X))
+	sh.Y.FillBytes(out[2:])
+	return out
+}
+
+func decodeShare(b []byte) (threshold.Share, error) {
+	if len(b) != 2+32 {
+		return threshold.Share{}, fmt.Errorf("share is %d bytes, want 34", len(b))
+	}
+	return threshold.Share{
+		X: int(binary.BigEndian.Uint16(b[:2])),
+		Y: new(big.Int).SetBytes(b[2:]),
+	}, nil
 }

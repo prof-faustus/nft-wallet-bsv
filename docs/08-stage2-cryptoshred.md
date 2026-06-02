@@ -47,9 +47,13 @@ implemented and **selectable** per exchange. Each declares its **shred strength*
 | Key-surrender bound to the swap | `key-surrender` | `K` is wrapped under a secret `s` that is revealed/committed by the swap (Bob learns `s` from settlement). Ties release tightly to the on-chain event. | COOPERATIVE |
 | Re-encryption to Bob | `reencrypt` | Alice re-encrypts the payload to Bob's key on delivery. Simplest; weakest "Alice can no longer access" property (she re-encrypted, so she held plaintext). | COOPERATIVE |
 | TEE-attested ("cloud TEE") | `tee-attested` | `K` is generated/held inside a TEE/cloud-TEE that, on swap settlement, releases `K` to Bob and **zeroizes** Alice's access, emitting an attestation. The only scheme that **enforces** Alice's loss. | ENFORCED (real enclave) / stand-in here |
+| Dealerless threshold custody | `threshold` | `K` is the 32-byte big-endian encoding of a **dealerless** `t`-of-`n` threshold secret over the secp256k1 order `N` (Shamir shares summed across independent contributors — no single party, not even Alice, holds `K` alone at generation). The swap delivers `t` shares to Bob, who **reconstructs** `K` (reconstruct-to-use) and decrypts. Alice shreds her shares + `K`. The reconstructed scalar is a *usable* secp256k1 key — this is dealerless threshold **key generation/sharing**, NOT interactive threshold ECDSA **signing** (a GG/FROST-class MtA protocol, deliberately not hand-rolled). | COOPERATIVE |
 
 The default is `ecdh-singleuse` (the project's single-use ECDH reveal-token mechanism,
-`docs/04` §4.5). The TEE scheme is the bridge to the T-stage (OD-1).
+`docs/04` §4.5). The TEE scheme is the bridge to the T-stage (OD-1). The `threshold`
+scheme distributes custody so that `t` honest custodians must collude to recover `K`
+early — a higher bar, but still **cooperative**: it does not *prove* Alice destroyed her
+copy.
 
 ## 8.4 Script-enforced continuity — the `OP_PUSH_TX` covenant (OD-3)
 
@@ -72,6 +76,10 @@ upgrades from convention-enforced to Script-enforced).
 - **I-CS-3 (enforced shred is attested, not assumed).** The `tee-attested` scheme yields an
   attestation of zeroization; the cooperative schemes do **not** — and must never be
   described as if they do.
+- **I-CS-4 (dealerless threshold sharing).** Under the `threshold` scheme, `K` is split
+  into `n` dealerless shares such that any `t` reconstruct it and any `t-1` reveal nothing;
+  Bob recovers `K` from exactly the `t` shares the swap delivers (no recipient key needed),
+  and fewer than `t` shares cannot decrypt the payload.
 
 ## 8.6 Honest claim (the Stage-2 upgrade, bounded)
 
