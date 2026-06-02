@@ -55,7 +55,7 @@ scheme distributes custody so that `t` honest custodians must collude to recover
 early — a higher bar, but still **cooperative**: it does not *prove* Alice destroyed her
 copy.
 
-## 8.4 Script-enforced continuity — the `OP_PUSH_TX` covenant (OD-3)
+## 8.4 Script-enforced continuity — the `OP_PUSH_TX` covenant (OD-3) — IMPLEMENTED
 
 Per `docs/02` §6: the token locking script additionally introspects the spending
 transaction (push the sighash preimage in the unlocking script; verify it commits to the
@@ -64,6 +64,34 @@ push-drop identity prefix + a P2PKH gate to the new owner — and require the sp
 `hashOutputs` to commit to it). Plain BSV Script, **no `OP_RETURN`**. This makes continuity
 Script-enforced: the NFT cannot be stripped or have its identity mutated on transfer (CN-1
 upgrades from convention-enforced to Script-enforced).
+
+**Status: built** (`internal/covenant`, OD-3 pulled into Stage 2). Construction details:
+
+- **Preimage authentication (OP_PUSH_TX).** A fixed, public key `d` and nonce `k` make the
+  forced signature computable in-script: for `z = Hash256(preimage)`, a valid signature
+  under `d` is `(r, s)` with `r = (k·G).x` (constant) and `s = A·z + B mod n`,
+  `A = k⁻¹`, `B = k⁻¹·r·d mod n`. The script computes `s`, assembles the DER signature
+  with low-S normalisation and minimal-encoding (sign-byte) handling, appends the sighash
+  flag, and runs `OP_CHECKSIG` against `d·G`. The engine re-derives the **actual** spend's
+  sighash, so the check passes iff the pushed preimage is genuine.
+- **Sighash binding.** `SIGHASH_SINGLE|FORKID` (0x43): `hashOutputs` commits to exactly the
+  output at the token input's index (index 0), so the covenant constrains its own successor
+  output and leaves payment/change outputs free.
+- **Continuity check.** The spender supplies only the new owner's 20-byte PKH; the covenant
+  reconstructs `out0 = value || varint(len) || <fixed identity prefix> || PKH || OP_EQUALVERIFY OP_CHECKSIG`
+  (identity and value immutable), hashes it, and requires equality with the preimage's
+  `hashOutputs`. The reconstructed prefix bytes are taken from the real carrier builder so
+  the hash matches byte-for-byte.
+- **Failure mode is liveness, not theft.** A defect in the in-script arithmetic can only make
+  `OP_CHECKSIG` *fail* (reject a spend); it can never make it accept a forged preimage,
+  because ECDSA will not validate a wrong-message signature against the engine-recomputed
+  sighash. The strip/mutate guarantee is the byte-exact `hashOutputs` equality that runs
+  only after a successful `OP_CHECKSIG`.
+- **Verification.** Executed in the real BSV script interpreter: a faithful transfer is
+  accepted; strip-to-P2PKH, TokenId/H(payload)/descriptor mutation, owner redirection,
+  value inflation, preimage tampering, `hashOutputs` forgery, and wrong-sighash-type are all
+  rejected; a 3000-iteration liveness sweep over varied identity/owner/sighash and the
+  minimal-DER edge cases (leading-zero `s`, high-bit-after-strip `s`) all pass.
 
 ## 8.5 Invariants (test these)
 
