@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/prof-faustus/nft-wallet-bsv/internal/chain/svnode"
 	"github.com/prof-faustus/nft-wallet-bsv/internal/deletion"
 	"github.com/prof-faustus/nft-wallet-bsv/internal/engine"
 	bsvparams "github.com/prof-faustus/nft-wallet-bsv/internal/params"
@@ -61,6 +62,9 @@ func main() {
 	pass := flag.String("passphrase", "", "keystore passphrase (required)")
 	role := flag.String("role", "buyer", "seller|buyer")
 	demo := flag.Bool("demo", false, "drive the engine through the happy path on a timer (UI honesty demo; not a real exchange)")
+	rpcURL := flag.String("rpc-url", "", "regtest node JSON-RPC URL; if set, enables LIVE on-chain actions")
+	rpcUser := flag.String("rpc-user", "nftbsv", "node RPC user")
+	rpcPass := flag.String("rpc-pass", "nftbsv-dev-rpc-password", "node RPC password")
 	flag.Parse()
 
 	if *pass == "" {
@@ -76,6 +80,11 @@ func main() {
 		r = engine.Seller
 	}
 	s := sidecar.New(w, engine.New(r), 1)
+	if *rpcURL != "" {
+		ad := svnode.New(svnode.Config{URL: *rpcURL, User: *rpcUser, Pass: *rpcPass})
+		s.EnableLiveActions(ad)
+		log.Printf("sidecar: LIVE on-chain actions enabled against %s", *rpcURL)
+	}
 	if *demo {
 		log.Printf("sidecar: --demo driving the engine through the happy path (UI honesty demo)")
 		go runDemo(s)

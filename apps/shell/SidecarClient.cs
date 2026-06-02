@@ -53,5 +53,22 @@ namespace NftWalletBsv.Shell
             HttpResponseMessage resp = await _http.PostAsync(_base + "/swap/review", content);
             return await resp.Content.ReadAsStringAsync();
         }
+
+        // PostActionAsync triggers a LIVE on-chain step in the sidecar
+        // (/action/setup-mint, /action/swap, /action/confirm,
+        // /action/attest) and returns the parsed {ok, error, log}.
+        public async Task<ActionResp?> PostActionAsync(string path)
+        {
+            HttpResponseMessage resp = await _http.PostAsync(_base + path, new StringContent("", Encoding.UTF8, "application/json"));
+            string s = await resp.Content.ReadAsStringAsync();
+            return JsonSerializer.Deserialize<ActionResp>(s);
+        }
+    }
+
+    public sealed class ActionResp
+    {
+        public bool ok { get; set; }
+        public string? error { get; set; }
+        public string[]? log { get; set; }
     }
 }

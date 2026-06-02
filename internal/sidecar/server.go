@@ -28,7 +28,8 @@ import (
 )
 
 // Server holds the wallet (keys), the engine, and the observable chain
-// depth / attestation status the UI polls.
+// depth / attestation status the UI polls. When live actions are enabled
+// (EnableLiveActions) it also drives a REAL exchange on regtest.
 type Server struct {
 	mu        sync.Mutex
 	w         *wallet.Wallet
@@ -37,6 +38,10 @@ type Server struct {
 	curDepth  uint32
 	attest    deletion.AttestStatus
 	mux       *http.ServeMux
+
+	actMu sync.Mutex // serializes live actions (one button at a time)
+	ad    liveAdapter
+	ex    *exchange
 }
 
 // New builds a sidecar over a wallet + engine.
