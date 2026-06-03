@@ -48,9 +48,16 @@ implemented and **selectable** per exchange. Each declares its **shred strength*
 | Re-encryption to Bob | `reencrypt` | Alice re-encrypts the payload to Bob's key on delivery. Simplest; weakest "Alice can no longer access" property (she re-encrypted, so she held plaintext). | COOPERATIVE |
 | TEE-attested ("cloud TEE") | `tee-attested` | `K` is generated/held inside a TEE/cloud-TEE that, on swap settlement, releases `K` to Bob and **zeroizes** Alice's access, emitting an attestation. The only scheme that **enforces** Alice's loss. | ENFORCED (real enclave) / stand-in here |
 | Dealerless threshold custody | `threshold` | `K` is the 32-byte big-endian encoding of a **dealerless** `t`-of-`n` threshold secret over the secp256k1 order `N` (Shamir shares summed across independent contributors — no single party, not even Alice, holds `K` alone at generation). The swap delivers `t` shares to Bob, who **reconstructs** `K` (reconstruct-to-use) and decrypts. Alice shreds her shares + `K`. The reconstructed scalar is a *usable* secp256k1 key — this is dealerless threshold **key generation/sharing**, NOT interactive threshold ECDSA **signing** (a GG/FROST-class MtA protocol, deliberately not hand-rolled). | COOPERATIVE |
+| Attested enclave (**T-element**) | `tee-enclave` | Like `tee-attested` (K wrapped to Bob; Alice gets no recovery), but the release+zeroize statement is signed by a genuine **attested enclave** using the project's `tee-sim` wire format (`internal/tee`): a hardware-style attestation quote (measurement + device key signed by the platform attestation root) plus a device binding over the statement, bound to a fresh nonce. The relying party verifies it **fail-closed** (allowlisted measurement, valid root signature, fresh nonce, exact statement). Wire-compatible with the real `tee-sim` binary (proven by a pinned known-answer vector). | ENFORCED (attested) / **SIMULATION** — software keys, self-generated root, not a vendor root |
 
 The default is `ecdh-singleuse` (the project's single-use ECDH reveal-token mechanism,
-`docs/04` §4.5). The TEE scheme is the bridge to the T-stage (OD-1). The `threshold`
+`docs/04` §4.5). `tee-attested` is the simple software stand-in; **`tee-enclave` is the
+built T-element** — it uses the project's `tee-sim` attested-enclave wire format
+(`internal/tee`), with a fail-closed verifier in SPVNFT and cross-language interop proven
+against the real `tee-sim` binary's known-answer vector. It remains a **simulation** (software
+keys, self-generated attestation root, not a vendor root); genuine hardware attestation
+(OD-1, the full T-stage) drops into the identical verifier interface when a real secure
+element with a verified vendor root is available. The `threshold`
 scheme distributes custody so that `t` honest custodians must collude to recover `K`
 early — a higher bar, but still **cooperative**: it does not *prove* Alice destroyed her
 copy.

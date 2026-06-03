@@ -136,6 +136,25 @@ violations are rejected exactly as a node would).
   the full menu flow over HTTP to DONE, and `fund` with no amount returns
   "sats is required". (See §0 to reproduce.)
 
+## 4a. The T-element — attested enclave, interop-proven against the real tee-sim
+
+`internal/tee` (the verifier + a wire-compatible software enclave) and the `tee-enclave`
+crypto-shred scheme (`internal/shred`).
+
+- **TestInteropKAT_MatchesRealTeeSim** — the Go enclave, from the same seeds, reproduces the
+  EXACT bytes of the deterministic known-answer vector emitted by the real `Property/tee-sim`
+  binary (`tee-sim kat`): device pubkey, device cert, attestation root, binding digest, and
+  both the attestation and binding Ed25519 signatures. Proves cross-language wire
+  compatibility — a quote from the real enclave verifies here byte-for-byte.
+- **TestVerifierFailClosed** — every replay (stale nonce), wrong-app (non-allowlisted
+  measurement), wrong-root, tampered-signature, wrong-transcript, and wrong-device path is
+  rejected.
+- **TestEnclaveReleaseAttested** — the `tee-enclave` scheme: enforced (the seller has no
+  recovery path), Bob still opens post-swap, the attested release verifies for Bob and is
+  rejected for the wrong recipient or a tampered binding; cooperative schemes carry no enclave
+  evidence. It is also exercised in the full menu cross-product (§4) and is honestly labelled
+  a SIMULATION (software keys, self-generated root — not hardware).
+
 ## 5. Stage-1 foundations (still green)
 
 Chain adapter + SPV, wallet + full-Script builder, push-drop token carrier (NO

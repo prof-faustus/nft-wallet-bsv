@@ -65,11 +65,14 @@ Stage 1 **does not** provide, and **does not claim**:
 
 Stage 2 is implemented, exhaustively tested, and CI-green (incl. a live SV Node job):
 
-- **Real payload encryption + crypto-shredding**, five selectable schemes
+- **Real payload encryption + crypto-shredding**, six selectable schemes
   (`internal/shred`): `ecdh-singleuse`, `key-surrender`, `reencrypt`, `tee-attested`
-  (a labelled software stand-in for a TEE), and `threshold` — a **dealerless threshold
-  ECDSA** key generation/sharing (`internal/threshold`, Shamir over secp256k1 N,
-  reconstruct-to-use). Cooperative shred is a CLAIM, never "verified deletion".
+  (a simple software stand-in), `threshold` — a **dealerless threshold ECDSA** key
+  generation/sharing (`internal/threshold`, Shamir over secp256k1 N, reconstruct-to-use) —
+  and **`tee-enclave`**, the **T-element**: an attested secure-enclave release using the
+  project's `tee-sim` wire format (`internal/tee`), fail-closed verifier, interop-proven
+  against the real `tee-sim` binary. Cooperative shred is a CLAIM, never "verified deletion";
+  the enclave path is a SIMULATION (self-generated root), not hardware.
 - **Script-enforced token continuity — the `OP_PUSH_TX` covenant (OD-3), built**
   (`internal/covenant`). A spend must reproduce a successor token output with identical
   identity + value; stripping/mutating is impossible in Script. No `OP_RETURN`. Proven
@@ -86,7 +89,7 @@ Stage 2 is implemented, exhaustively tested, and CI-green (incl. a live SV Node 
 | Real payload encryption + crypto-shredding | 2 | ✅ **built** — `internal/shred`, `docs/08` |
 | Dealerless threshold ECDSA custody | 2 | ✅ **built** — `internal/threshold`, `docs/08` |
 | Script-enforced token continuity (`OP_PUSH_TX` covenant) | 2 (OD-3) | ✅ **built** — `internal/covenant`, `docs/08` §8.4 |
-| The **T**-element (read as **TEE**; see `docs/07`) — attested execution + attested wipe | 2+ ("T-stage") | software stand-in (`tee-attested`); hardware TEE deferred — `docs/04` §6, `docs/07` |
+| The **T**-element (read as **TEE**; see `docs/07`) — attested execution + attested wipe | 2 (sim) / 2+ (hardware) | ✅ **attested enclave built** — `tee-enclave` scheme via `internal/tee`, wire-compatible with `Property/tee-sim` (KAT-proven); a SIMULATION (self-generated root). Genuine hardware TEE (verified vendor root) drops into the same verifier — `docs/04` §6, `docs/07` |
 | Full two-tier discovery network (Bitcoin-style + Bitmessage-style) | later | `docs/03` §8 |
 
 ## 4. Document map

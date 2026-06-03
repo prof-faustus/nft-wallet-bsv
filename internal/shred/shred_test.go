@@ -39,7 +39,7 @@ func TestAllSchemes_BobOpens(t *testing.T) {
 //
 //trace:test I-CS-1
 func TestWrongKeyCannotOpen(t *testing.T) {
-	for _, name := range []string{"ecdh-singleuse", "reencrypt", "tee-attested"} {
+	for _, name := range []string{"ecdh-singleuse", "reencrypt", "tee-attested", "tee-enclave"} {
 		t.Run(name, func(t *testing.T) {
 			sc, _ := ForName(name)
 			bob, _ := ec.NewPrivateKey()
@@ -123,9 +123,68 @@ func TestAttestationOnlyEnforced(t *testing.T) {
 	}
 }
 
+// HH-1: the tee-enclave scheme carries a genuine attested release/zeroize
+// (tee-sim wire format) that VerifyEnclaveRelease accepts; tampering or the
+// wrong recipient is rejected; cooperative schemes carry no such evidence.
+//
+//trace:test HH-1
+func TestEnclaveReleaseAttested(t *testing.T) {
+	bob, _ := ec.NewPrivateKey()
+	sc, _ := ForName("tee-enclave")
+	if sc.Strength() != Enforced {
+		t.Fatal("tee-enclave must be Enforced")
+	}
+	sealed, secret, err := sc.Seal(payload, bob.PubKey())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Enforced: the seller has no recovery path (enclave-held K).
+	if _, err := secret.TryOpen(sealed); err == nil {
+		t.Fatal("tee-enclave seller could open — should never hold K")
+	}
+	// Bob still opens post-swap.
+	if out, err := sc.Open(sealed, bob); err != nil || !bytes.Equal(out, payload) {
+		t.Fatalf("bob open: %v", err)
+	}
+	// The attested release verifies for Bob.
+	if !VerifyEnclaveRelease(sealed, bob.PubKey()) {
+		t.Fatal("valid enclave release did not verify")
+	}
+	// Wrong recipient: the statement is bound to bobPub.
+	mallory, _ := ec.NewPrivateKey()
+	if VerifyEnclaveRelease(sealed, mallory.PubKey()) {
+		t.Fatal("enclave release verified for the wrong recipient")
+	}
+	// Tampered binding signature is rejected.
+	bad := *sealed
+	badTEE := *sealed.TEE
+	badTEE.Binding.BindingSig = append([]byte(nil), sealed.TEE.Binding.BindingSig...)
+	badTEE.Binding.BindingSig[0] ^= 0xff
+	bad.TEE = &badTEE
+	if VerifyEnclaveRelease(&bad, bob.PubKey()) {
+		t.Fatal("accepted a tampered enclave binding")
+	}
+	// Cooperative schemes carry no enclave evidence.
+	for _, name := range []string{"ecdh-singleuse", "key-surrender", "reencrypt", "threshold"} {
+		s, _, _ := mustScheme(t, name).Seal(payload, bob.PubKey())
+		if s.TEE != nil || VerifyEnclaveRelease(s, bob.PubKey()) {
+			t.Fatalf("%s must not carry enclave evidence", name)
+		}
+	}
+}
+
+func mustScheme(t *testing.T, name string) Scheme {
+	t.Helper()
+	sc, err := ForName(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return sc
+}
+
 func TestRegistry(t *testing.T) {
-	if len(Names()) != 5 {
-		t.Fatalf("want 5 schemes, got %v", Names())
+	if len(Names()) != 6 {
+		t.Fatalf("want 6 schemes, got %v", Names())
 	}
 	if _, err := ForName(DefaultScheme); err != nil {
 		t.Fatalf("default scheme: %v", err)

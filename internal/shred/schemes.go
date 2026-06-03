@@ -1,14 +1,17 @@
-// The five crypto-shred schemes (docs/08 §8.3). All are selectable via
+// The six crypto-shred schemes (docs/08 §8.3). All are selectable via
 // shred.ForName. See package doc for the honest strength classification.
 package shred
 
 import (
+	"crypto/rand"
+	"crypto/sha256"
 	"encoding/binary"
 	"fmt"
 	"math/big"
 
 	ec "github.com/bsv-blockchain/go-sdk/primitives/ec"
 	"github.com/prof-faustus/nft-wallet-bsv/internal/crypto"
+	"github.com/prof-faustus/nft-wallet-bsv/internal/tee"
 	"github.com/prof-faustus/nft-wallet-bsv/internal/threshold"
 )
 
@@ -233,6 +236,95 @@ func VerifyTEEAttestation(s *Sealed, bobPub *ec.PublicKey) bool {
 
 func attStatement(bobPub *ec.PublicKey, ct []byte) []byte {
 	return kdf("nftbsv/tee/v1|released+zeroized|", append(bobPub.Compressed(), ct...))
+}
+
+// ---- 6. tee-enclave (ENFORCED; attested by the tee-sim secure element) ---
+//
+// The T-element (docs/04 §4.6, OD-1). Like tee-attested, K is wrapped to Bob
+// (ECDH) and Alice is given NO recovery path (the enclave holds/zeroizes K).
+// UNLIKE the stand-in, the release+zeroize statement is signed by a genuine
+// attested ENCLAVE using the project's `tee-sim` wire format (internal/tee):
+// a hardware-style attestation quote (measurement + device key, signed by the
+// platform attestation root) plus a device-key binding over the statement,
+// bound to a fresh nonce. The verifier (VerifyEnclaveRelease) is fail-closed.
+//
+// ⚠️ Still a SIMULATION: the enclave's keys are software Ed25519 keys and the
+// attestation root is self-generated, not a vendor root (see internal/tee).
+// It proves the ATTESTATION FLOW and the verifier's checks with the identical
+// interface real hardware would use — it is NOT hardware-attested deletion,
+// and must never be presented as such (CLAUDE.md §4).
+//
+//trace:impl HH-1
+type teeEnclave struct{}
+
+// appMeasurement is the fixed application measurement the relying party
+// allowlists for the nft-wallet-bsv enclave app.
+var appMeasurement = sha256.Sum256([]byte("nft-wallet-bsv/enclave/v1"))
+
+// teeEvidence is the attested release/zeroize evidence carried in Sealed.
+type teeEvidence struct {
+	Binding     tee.DeviceBinding
+	Measurement [32]byte
+	RootPub     [32]byte
+	Nonce       []byte
+}
+
+func (teeEnclave) Name() string       { return "tee-enclave" }
+func (teeEnclave) Strength() Strength { return Enforced }
+
+func (teeEnclave) Seal(payload []byte, bobPub *ec.PublicKey) (*Sealed, *SellerSecret, error) {
+	base, _, err := ecdhSingleUse{}.Seal(payload, bobPub) // K wrapped to Bob via ECDH
+	if err != nil {
+		return nil, nil, err
+	}
+	base.Scheme = "tee-enclave"
+	// The (simulated) secure element attests it released K to Bob and
+	// zeroized Alice's copy, signing that statement bound to a fresh nonce.
+	enc, err := tee.Generate(appMeasurement)
+	if err != nil {
+		return nil, nil, err
+	}
+	nonce := make([]byte, 16)
+	if _, err := rand.Read(nonce); err != nil {
+		return nil, nil, err
+	}
+	binding := enc.Bind(nonce, enclaveStatement(bobPub, base.Ciphertext))
+	base.TEE = &teeEvidence{Binding: binding, Measurement: enc.Measurement(), RootPub: enc.RootPub(), Nonce: nonce}
+	// Enforced: Alice never held K outside the enclave — no recovery path.
+	return base, &SellerSecret{zeroize: nil, recover: nil}, nil
+}
+
+func (teeEnclave) Open(s *Sealed, bobPriv *ec.PrivateKey) ([]byte, error) {
+	return ecdhSingleUse{}.Open(s, bobPriv)
+}
+
+// enclaveStatement is the exact transcript the enclave signs: domain ‖
+// bobPub ‖ ciphertext — binding the release+zeroize to THIS recipient and
+// THIS ciphertext.
+func enclaveStatement(bobPub *ec.PublicKey, ct []byte) []byte {
+	out := []byte("nftbsv/tee/v2|released+zeroized|")
+	out = append(out, bobPub.Compressed()...)
+	out = append(out, ct...)
+	return out
+}
+
+// VerifyEnclaveRelease checks the tee-enclave attestation fail-closed: a
+// genuine quote (allowlisted measurement, valid root signature), and the
+// device signed the release/zeroize statement for THIS recipient+ciphertext
+// bound to the quote's nonce. Returns false for any other scheme or on any
+// tamper/replay/wrong-device.
+//
+// (Simulation boundary: the pinned root/measurement ride in the evidence
+// here; a real relying party pins the VENDOR root + measurement out of band
+// — same verifier interface. See internal/tee + docs/07 OD-1.)
+//
+//trace:impl HH-1
+func VerifyEnclaveRelease(s *Sealed, bobPub *ec.PublicKey) bool {
+	if s == nil || s.Scheme != "tee-enclave" || s.TEE == nil {
+		return false
+	}
+	pol := tee.Policy{MeasurementAllowlist: [][32]byte{s.TEE.Measurement}, RootPub: s.TEE.RootPub}
+	return tee.VerifyBinding(s.TEE.Binding, pol, s.TEE.Nonce, enclaveStatement(bobPub, s.Ciphertext))
 }
 
 // ---- 5. threshold (COOPERATIVE; dealerless t-of-n distributed custody) ---
