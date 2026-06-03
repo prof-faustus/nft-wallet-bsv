@@ -49,6 +49,7 @@ func newV2LiveServer(t *testing.T) string {
 	}
 	w := wallet.New(ks, bsvparams.Regtest)
 	s := New(w, engine.New(engine.Buyer), 1)
+	s.SetControlToken(testControlToken)
 	s.EnableV2(ad)
 	srv := httptest.NewServer(s.Handler())
 	t.Cleanup(srv.Close)

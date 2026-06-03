@@ -7,16 +7,29 @@
 // CLAIM, never "verified"). The browser holds NO keys.
 package sidecar
 
-import "net/http"
+import (
+	"html/template"
+	"net/http"
+)
 
+// webHandler serves the same-origin control panel with the per-process control
+// token embedded so its fetch() calls carry the token header (auth.go). A
+// cross-origin page cannot read this token (same-origin policy) nor set the
+// custom header without a preflight the sidecar never grants — so it cannot
+// drive the guarded routes (audit finding 5). The browser still holds NO keys.
 func (s *Server) webHandler(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path != "/" {
 		http.NotFound(w, r)
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_, _ = w.Write([]byte(controlPanelHTML))
+	_ = controlPanelTmpl.Execute(w, map[string]string{
+		"Token":  s.ControlToken(),
+		"Header": ControlTokenHeader,
+	})
 }
+
+var controlPanelTmpl = template.Must(template.New("panel").Parse(controlPanelHTML))
 
 const controlPanelHTML = `<!doctype html>
 <html><head><meta charset="utf-8"><title>nft-wallet-bsv — Stage 1</title>
@@ -44,6 +57,8 @@ const controlPanelHTML = `<!doctype html>
 <h3>Live log (real txids)</h3>
 <div id="log"></div>
 <script>
+const CTOKEN = "{{.Token}}";   // per-process control token (same-origin only)
+const CHEADER = "{{.Header}}"; // custom header name the sidecar requires
 async function refresh(){
   try{
     const s = await (await fetch('/status')).json();
@@ -56,7 +71,7 @@ async function refresh(){
 async function act(path, btn, next){
   btn.disabled = true;
   try{
-    const j = await (await fetch(path, {method:'POST'})).json();
+    const j = await (await fetch(path, {method:'POST', headers:{[CHEADER]: CTOKEN}})).json();
     const log = document.getElementById('log');
     log.textContent = (j.log||[]).join('\n');
     log.scrollTop = log.scrollHeight;

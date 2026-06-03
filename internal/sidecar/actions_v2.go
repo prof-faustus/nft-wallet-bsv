@@ -25,6 +25,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"time"
 
@@ -83,16 +84,21 @@ type v2Session struct {
 func (s *Server) EnableV2(ad liveAdapter) {
 	s.ad = ad
 	s.v2 = &v2Session{}
+	// /v2/options is read-only (serves the menus) — open. Every state-changing
+	// route is wrapped with guard(): POST + JSON + control token + same-site,
+	// body-capped (auth.go). Without the token a local process or a webpage
+	// cannot reset, create keys, fund, mint, deliver, swap, confirm, shred, or
+	// attest (audit findings 1, 8).
 	s.mux.HandleFunc("/v2/options", s.v2Options)
-	s.mux.HandleFunc("/v2/reset", s.v2JSON(s.v2Reset))
-	s.mux.HandleFunc("/v2/keys", s.v2JSON(s.v2Keys))
-	s.mux.HandleFunc("/v2/fund", s.v2JSON(s.v2Fund))
-	s.mux.HandleFunc("/v2/mint", s.v2JSON(s.v2Mint))
-	s.mux.HandleFunc("/v2/deliver", s.v2JSON(s.v2Deliver))
-	s.mux.HandleFunc("/v2/swap", s.v2JSON(s.v2Swap))
-	s.mux.HandleFunc("/v2/confirm", s.v2JSON(s.v2Confirm))
-	s.mux.HandleFunc("/v2/shred", s.v2JSON(s.v2Shred))
-	s.mux.HandleFunc("/v2/attest", s.v2JSON(s.v2Attest))
+	s.mux.HandleFunc("/v2/reset", s.guard(s.v2JSON(s.v2Reset)))
+	s.mux.HandleFunc("/v2/keys", s.guard(s.v2JSON(s.v2Keys)))
+	s.mux.HandleFunc("/v2/fund", s.guard(s.v2JSON(s.v2Fund)))
+	s.mux.HandleFunc("/v2/mint", s.guard(s.v2JSON(s.v2Mint)))
+	s.mux.HandleFunc("/v2/deliver", s.guard(s.v2JSON(s.v2Deliver)))
+	s.mux.HandleFunc("/v2/swap", s.guard(s.v2JSON(s.v2Swap)))
+	s.mux.HandleFunc("/v2/confirm", s.guard(s.v2JSON(s.v2Confirm)))
+	s.mux.HandleFunc("/v2/shred", s.guard(s.v2JSON(s.v2Shred)))
+	s.mux.HandleFunc("/v2/attest", s.guard(s.v2JSON(s.v2Attest)))
 }
 
 type v2Resp struct {
@@ -106,7 +112,12 @@ type v2Resp struct {
 // HTTP handler that serializes actions and returns the running log.
 func (s *Server) v2JSON(fn func(context.Context, json.RawMessage) (any, error)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		body, _ := readAll(r)
+		body, err := readBody(r)
+		if err != nil {
+			// guard() set http.MaxBytesReader; an oversize body surfaces here.
+			http.Error(w, "payload too large", http.StatusRequestEntityTooLarge)
+			return
+		}
 		s.actMu.Lock()
 		defer s.actMu.Unlock()
 		ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
@@ -503,6 +514,13 @@ func (s *Server) v2Attest(_ context.Context, _ json.RawMessage) (any, error) {
 	if ex.swapTxid == "" {
 		return nil, fmt.Errorf("confirm the swap first")
 	}
+	// The CDA is only meaningful AFTER the swap has confirmed on-chain. The
+	// engine accepts EvDeletionAttestValid solely in CONFIRMED; gate on that
+	// here so a premature /v2/attest cannot run (audit finding 3). swapTxid
+	// existing is NOT sufficient — require the confirmed state explicitly.
+	if st := s.engState(); st != engine.StateConfirmed {
+		return nil, fmt.Errorf("attestation requires the swap to be CONFIRMED (state=%s); confirm first (/v2/confirm)", st)
+	}
 	cda, err := deletion.BuildCDA(ex.tokenId, ex.mintTxid, 0, ex.swapTxid, ex.hp, time.Now().Unix())
 	if err != nil {
 		return nil, err
@@ -515,10 +533,13 @@ func (s *Server) v2Attest(_ context.Context, _ json.RawMessage) (any, error) {
 	if deletion.ClassifyReceived(&cda, sig, ex.aliceKey.PubKey(), exp) != deletion.AttestValid {
 		return nil, fmt.Errorf("CDA failed validation")
 	}
-	s.SetAttest(deletion.AttestValid)
+	// Advance the engine FIRST; only mutate the observable deletion status
+	// once the transition is accepted, so /status can never display a valid
+	// deletion claim the engine did not accept (audit finding 3).
 	if err := s.Advance(engine.EvDeletionAttestValid); err != nil {
 		return nil, err
 	}
+	s.SetAttest(deletion.AttestValid)
 	s.v2logf("Seller sent a deletion ATTESTATION; buyer validated signature + bindings. A signed CLAIM — NOT proof the copy is gone.")
 
 	// T-stage (docs/04 §4.6): the seller's enclave attests it WIPED the
@@ -542,20 +563,18 @@ func (s *Server) v2Attest(_ context.Context, _ json.RawMessage) (any, error) {
 	return map[string]any{"attested": true, "t_stage": string(wipeStatus)}, nil
 }
 
-// readAll reads the request body (bounded) for JSON decoding.
-func readAll(r *http.Request) (json.RawMessage, error) {
+// readBody reads the (guard-bounded) request body for JSON decoding. The body
+// is already capped by http.MaxBytesReader in guard(); io.ReadAll therefore
+// returns an error on an oversize body, which v2JSON maps to 413 — rather than
+// silently accepting a truncated buffer (audit finding 8).
+func readBody(r *http.Request) (json.RawMessage, error) {
 	if r == nil || r.Body == nil {
 		return json.RawMessage("{}"), nil
 	}
 	defer r.Body.Close()
-	buf := make([]byte, 0, 512)
-	tmp := make([]byte, 512)
-	for {
-		nr, err := r.Body.Read(tmp)
-		buf = append(buf, tmp[:nr]...)
-		if err != nil || len(buf) > 1<<20 {
-			break
-		}
+	buf, err := io.ReadAll(r.Body)
+	if err != nil {
+		return nil, err
 	}
 	if len(buf) == 0 {
 		return json.RawMessage("{}"), nil

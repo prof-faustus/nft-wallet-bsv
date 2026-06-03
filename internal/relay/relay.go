@@ -21,7 +21,9 @@
 package relay
 
 import (
+	"context"
 	"encoding/binary"
+	"errors"
 
 	hash "github.com/bsv-blockchain/go-sdk/primitives/hash"
 )
@@ -29,7 +31,15 @@ import (
 // Limits (named, not magic).
 const (
 	MaxPayloadBytes = 256 * 1024 // an object payload larger than this is rejected
+	// MaxSolveAttempts caps a single PoW grind so a high target can never hang
+	// a process indefinitely (audit finding 9). At ~10^6 hashes/s this bounds a
+	// solve to seconds; callers that need more set their own budget via ctx.
+	MaxSolveAttempts uint64 = 1 << 28
 )
+
+// ErrSolveBudget is returned when Solve exhausts its attempt budget without
+// meeting the target difficulty.
+var ErrSolveBudget = errors.New("relay: proof-of-work budget exhausted before target met")
 
 // Object is a relayed, opaque, expiring, PoW-stamped blob.
 type Object struct {
@@ -85,15 +95,29 @@ func leadingZeroBits(h [32]byte) int {
 // PoWBits returns the object's achieved proof-of-work (leading zero bits).
 func (o Object) PoWBits() int { return leadingZeroBits(o.Hash()) }
 
-// Solve grinds Nonce until the object hash has >= targetBits leading zero
-// bits. Deterministic given the object content; returns the solved object.
-func Solve(o Object, targetBits int) Object {
-	for {
+// Solve grinds Nonce until the object hash has >= targetBits leading zero bits.
+// It is BOUNDED and CANCELLABLE (audit finding 9): it stops with an error when
+// ctx is cancelled/expired or after maxAttempts nonces, instead of looping
+// forever at a high difficulty. Deterministic given the object content and a
+// sufficient budget; returns the solved object on success.
+//
+// # Errors
+//   - ctx.Err() if the context is cancelled or its deadline passes.
+//   - ErrSolveBudget if maxAttempts nonces are tried without meeting target.
+func Solve(ctx context.Context, o Object, targetBits int, maxAttempts uint64) (Object, error) {
+	for attempts := uint64(0); attempts < maxAttempts; attempts++ {
 		if leadingZeroBits(o.Hash()) >= targetBits {
-			return o
+			return o, nil
+		}
+		// Check cancellation periodically (cheap mask, not every hash).
+		if attempts&0x3fff == 0 {
+			if err := ctx.Err(); err != nil {
+				return Object{}, err
+			}
 		}
 		o.Nonce++
 	}
+	return Object{}, ErrSolveBudget
 }
 
 // Kind tags a Tier-B message.

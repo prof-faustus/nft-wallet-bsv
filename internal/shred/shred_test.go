@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	ec "github.com/bsv-blockchain/go-sdk/primitives/ec"
+	"github.com/prof-faustus/nft-wallet-bsv/internal/tee"
 )
 
 var payload = []byte("the unique NFT payload — stage 2 real encryption")
@@ -146,13 +147,20 @@ func TestEnclaveReleaseAttested(t *testing.T) {
 	if out, err := sc.Open(sealed, bob); err != nil || !bytes.Equal(out, payload) {
 		t.Fatalf("bob open: %v", err)
 	}
-	// The attested release verifies for Bob.
-	if !VerifyEnclaveRelease(sealed, bob.PubKey()) {
+	// The relying party pins its trust anchors OUT OF BAND (audit finding 2):
+	// the published AppMeasurement and the enclave root learned at enrolment
+	// (captured here from the fresh evidence; in production this is the pinned
+	// vendor root). VerifyEnclaveRelease takes this policy — it does NOT pin
+	// from the evidence.
+	pol := tee.Policy{MeasurementAllowlist: [][32]byte{AppMeasurement}, RootPub: sealed.TEE.RootPub}
+
+	// The attested release verifies for Bob under the pinned policy.
+	if !VerifyEnclaveRelease(sealed, bob.PubKey(), pol) {
 		t.Fatal("valid enclave release did not verify")
 	}
 	// Wrong recipient: the statement is bound to bobPub.
 	mallory, _ := ec.NewPrivateKey()
-	if VerifyEnclaveRelease(sealed, mallory.PubKey()) {
+	if VerifyEnclaveRelease(sealed, mallory.PubKey(), pol) {
 		t.Fatal("enclave release verified for the wrong recipient")
 	}
 	// Tampered binding signature is rejected.
@@ -161,15 +169,34 @@ func TestEnclaveReleaseAttested(t *testing.T) {
 	badTEE.Binding.BindingSig = append([]byte(nil), sealed.TEE.Binding.BindingSig...)
 	badTEE.Binding.BindingSig[0] ^= 0xff
 	bad.TEE = &badTEE
-	if VerifyEnclaveRelease(&bad, bob.PubKey()) {
+	if VerifyEnclaveRelease(&bad, bob.PubKey(), pol) {
 		t.Fatal("accepted a tampered enclave binding")
 	}
 	// Cooperative schemes carry no enclave evidence.
 	for _, name := range []string{"ecdh-singleuse", "key-surrender", "reencrypt", "threshold"} {
 		s, _, _ := mustScheme(t, name).Seal(payload, bob.PubKey())
-		if s.TEE != nil || VerifyEnclaveRelease(s, bob.PubKey()) {
+		if s.TEE != nil || VerifyEnclaveRelease(s, bob.PubKey(), pol) {
 			t.Fatalf("%s must not carry enclave evidence", name)
 		}
+	}
+
+	// AUDIT FINDING 2 — the verifier must NOT trust anchors carried in the
+	// evidence. An attacker forges its OWN enclave (fresh root + binding) and
+	// presents it; under the relying party's PINNED policy it is REJECTED,
+	// even though the evidence is internally consistent under its own root.
+	attacker, _, err := mustScheme(t, "tee-enclave").Seal(payload, bob.PubKey())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if VerifyEnclaveRelease(attacker, bob.PubKey(), pol) {
+		t.Fatal("accepted an attacker-rooted enclave release under the pinned policy (evidence-supplied trust anchor)")
+	}
+	// Sanity: the attacker evidence IS internally consistent — it verifies only
+	// under a policy that trusts the attacker's own root (which a real relying
+	// party would never pin). This is exactly the gap the fix closes.
+	attPol := tee.Policy{MeasurementAllowlist: [][32]byte{AppMeasurement}, RootPub: attacker.TEE.RootPub}
+	if !VerifyEnclaveRelease(attacker, bob.PubKey(), attPol) {
+		t.Fatal("attacker evidence should verify under its own (untrusted) root — internal-consistency sanity")
 	}
 }
 

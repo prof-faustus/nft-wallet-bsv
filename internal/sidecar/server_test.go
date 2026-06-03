@@ -27,7 +27,9 @@ func newTestServer(t *testing.T, eng *engine.Engine) (*Server, *wallet.Wallet) {
 		t.Fatal(err)
 	}
 	w := wallet.New(ks, bsvparams.Regtest)
-	return New(w, eng, 1), w
+	srv := New(w, eng, 1)
+	srv.SetControlToken(testControlToken)
+	return srv, w
 }
 
 func TestStatusHonest(t *testing.T) {
@@ -156,7 +158,13 @@ func getJSON(t *testing.T, url string, v any) {
 func postJSON(t *testing.T, url string, in, out any) {
 	t.Helper()
 	body, _ := json.Marshal(in)
-	resp, err := http.Post(url, "application/json", bytes.NewReader(body))
+	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set(ControlTokenHeader, testControlToken) // guarded route (auth.go)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}

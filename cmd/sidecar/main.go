@@ -9,6 +9,7 @@ package main
 import (
 	"flag"
 	"log"
+	"net"
 	"net/http"
 	"time"
 
@@ -66,10 +67,16 @@ func main() {
 	rpcURL := flag.String("rpc-url", "", "regtest node JSON-RPC URL; if set, enables LIVE on-chain actions")
 	rpcUser := flag.String("rpc-user", "nftbsv", "node RPC user")
 	rpcPass := flag.String("rpc-pass", "nftbsv-dev-rpc-password", "node RPC password")
+	unsafeListen := flag.Bool("unsafe-listen", false, "permit a NON-loopback bind address (DANGEROUS: the sidecar holds keys and is a local IPC surface; only set this if you understand the exposure)")
 	flag.Parse()
 
 	if *pass == "" {
 		log.Fatal("sidecar: --passphrase is required (keys are encrypted at rest, SC-1)")
+	}
+	// The sidecar is a local IPC surface that holds keys. Refuse to bind a
+	// non-loopback address unless explicitly forced (audit finding 1).
+	if !isLoopbackBind(*addr) && !*unsafeListen {
+		log.Fatalf("sidecar: refusing to bind non-loopback address %q (keys live here). Pass --unsafe-listen to override.", *addr)
 	}
 	ks, err := wallet.OpenFileKeystore(*ksPath, *pass)
 	if err != nil {
@@ -95,7 +102,38 @@ func main() {
 		go runDemo(s)
 	}
 
+	// Print the per-process control token: the launcher hands it to the shell,
+	// which must send it in the X-NFTBSV-Control-Token header on every mutating
+	// request. Without it, a stray local process or a webpage cannot drive the
+	// money-moving routes (audit finding 1).
+	log.Printf("sidecar: control token = %s (set %s on every mutating request)", s.ControlToken(), sidecar.ControlTokenHeader)
+
 	log.Printf("sidecar: listening on %s (role=%s) — localhost IPC for the .NET shell", *addr, *role)
-	srv := &http.Server{Addr: *addr, Handler: s.Handler()}
+	srv := &http.Server{
+		Addr:              *addr,
+		Handler:           s.Handler(),
+		ReadHeaderTimeout: 10 * time.Second, // slow-loris guard
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      150 * time.Second, // > the 120s action context
+		IdleTimeout:       120 * time.Second,
+	}
 	log.Fatal(srv.ListenAndServe())
+}
+
+// isLoopbackBind reports whether addr binds a loopback host. An empty/":port"
+// host binds all interfaces (NOT loopback). A bare hostname that is not
+// "localhost" is treated as non-loopback (fail-safe).
+func isLoopbackBind(addr string) bool {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return false
+	}
+	if host == "" {
+		return false // ":8090" binds all interfaces
+	}
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }

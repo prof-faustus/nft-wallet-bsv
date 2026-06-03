@@ -1,6 +1,7 @@
 package netstack
 
 import (
+	"context"
 	"testing"
 
 	"github.com/prof-faustus/nft-wallet-bsv/internal/discovery"
@@ -52,7 +53,7 @@ func TestRouterComposesDiscoveryAndRelay(t *testing.T) {
 	}
 
 	// Tier B: A publishes an object; announce flows to B; B fetches + stores.
-	_, announce, err := a.Publish(stream, []byte("a channel frame"))
+	_, announce, err := a.Publish(context.Background(), stream, []byte("a channel frame"))
 	if err != nil {
 		t.Fatal(err)
 	}

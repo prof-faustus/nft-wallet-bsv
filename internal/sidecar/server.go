@@ -17,6 +17,7 @@ package sidecar
 import (
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"sync"
 
@@ -39,6 +40,7 @@ type Server struct {
 	attest    deletion.AttestStatus
 	delLabel  string // T-stage override for the deletion label (when set)
 	mux       *http.ServeMux
+	token     string // per-process control token (auth.go) — required on mutating routes
 
 	actMu sync.Mutex // serializes live actions (one button at a time)
 	ad    liveAdapter
@@ -46,13 +48,18 @@ type Server struct {
 	v2    *v2Session // parameter-driven exchange (EnableV2)
 }
 
-// New builds a sidecar over a wallet + engine.
+// New builds a sidecar over a wallet + engine. It mints a fresh per-process
+// control token (auth.go); every MUTATING route is wrapped with guard() so a
+// stray local process or a cross-origin webpage cannot drive money-moving
+// actions. Read-only routes (/healthz, /status, /address) stay open. The
+// launcher prints the token and hands it to the shell; SetControlToken can
+// pin a shared value.
 func New(w *wallet.Wallet, eng *engine.Engine, confDepth uint32) *Server {
-	s := &Server{w: w, eng: eng, confDepth: confDepth, attest: deletion.AttestAbsent, mux: http.NewServeMux()}
+	s := &Server{w: w, eng: eng, confDepth: confDepth, attest: deletion.AttestAbsent, mux: http.NewServeMux(), token: newControlToken()}
 	s.mux.HandleFunc("/healthz", s.healthz)
 	s.mux.HandleFunc("/status", s.status)
 	s.mux.HandleFunc("/address", s.address)
-	s.mux.HandleFunc("/swap/review", s.swapReview)
+	s.mux.HandleFunc("/swap/review", s.guard(s.swapReview)) // takes a body + drives a signing decision → guarded
 	return s
 }
 
@@ -72,6 +79,14 @@ func (s *Server) Advance(ev engine.EventType) error {
 	defer s.mu.Unlock()
 	_, err := s.eng.Apply(engine.Event{Type: ev})
 	return err
+}
+
+// engState returns the engine's current state under the server lock (safe
+// against concurrent /status reads and Advance).
+func (s *Server) engState() engine.State {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.eng.State()
 }
 
 func (s *Server) healthz(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("ok")) }
@@ -113,6 +128,16 @@ func (s *Server) address(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, addressResp{Label: label, Address: addr})
 }
 
+// Exact decoded lengths the swap-review fields MUST have (named, not magic):
+// a token id and a payload hash are SHA-256 (32 bytes); an owner PKH is
+// HASH160 (20 bytes). A descriptor must be present and bounded.
+const (
+	tokenIDLen       = 32
+	payloadHashLen   = 32
+	ownerPKHLen      = 20
+	maxDescriptorLen = 4096
+)
+
 // swapReviewReq is what the shell posts to review a swap before signing.
 type swapReviewReq struct {
 	TxHex       string `json:"tx_hex"`
@@ -124,36 +149,90 @@ type swapReviewReq struct {
 	PriceSats   uint64 `json:"price_sats"`
 	DustSats    uint64 `json:"dust_sats"`
 	MaxOutputs  int    `json:"max_outputs"`
+	// UseCovenant tells the review which continuity model the tx uses, so the
+	// echoed terms label it unambiguously (docs/02 §6; CLAUDE.md §4).
+	UseCovenant bool `json:"use_covenant"`
+}
+
+type swapTerms struct {
+	PriceToAliceSats uint64 `json:"price_to_alice_sats"`
+	AliceAddr        string `json:"alice_addr"`
+	TokenIdHex       string `json:"token_id_hex"`
+	HPayloadHex      string `json:"h_payload_hex"`
+	BobOwnerPKHHex   string `json:"bob_owner_pkh_hex"`
+	// Continuity is the EXACT enforcement model the user is signing under —
+	// never silently implied. Convention mode is labelled "wallet/indexer
+	// enforced only" so it is never mistaken for a Script-enforced token.
+	Continuity string `json:"continuity"`
 }
 
 type swapReviewResp struct {
-	OK    bool   `json:"ok"`
-	Error string `json:"error,omitempty"`
-	// Terms echoed for the human to confirm BEFORE signing.
-	Terms *struct {
-		PriceToAliceSats uint64 `json:"price_to_alice_sats"`
-		AliceAddr        string `json:"alice_addr"`
-		TokenIdHex       string `json:"token_id_hex"`
-		HPayloadHex      string `json:"h_payload_hex"`
-		BobOwnerPKHHex   string `json:"bob_owner_pkh_hex"`
-	} `json:"terms,omitempty"`
+	OK    bool       `json:"ok"`
+	Error string     `json:"error,omitempty"`
+	Terms *swapTerms `json:"terms,omitempty"` // echoed for the human to confirm BEFORE signing
+}
+
+// continuityLabel renders the user-facing continuity model for a signing
+// review. Convention mode MUST be presented as wallet/indexer-enforced only
+// (not Script-enforced) so the distinction is unavoidable (audit finding 10;
+// CLAUDE.md §4).
+func continuityLabel(covenant bool) string {
+	if covenant {
+		return "Script-enforced (OP_PUSH_TX covenant — token identity/value cannot be stripped)"
+	}
+	return "wallet/indexer enforced only (convention mode — NOT Script-enforced; an indexer/wallet that ignores the convention is not stopped by Script)"
+}
+
+// decodeFixed hex-decodes s and requires exactly n bytes. It returns a named
+// error so a malformed field fails the review immediately and clearly rather
+// than producing a misleading downstream verifier failure (audit finding 7).
+func decodeFixed(field, s string, n int) ([]byte, error) {
+	b, err := hex.DecodeString(s)
+	if err != nil {
+		return nil, fmt.Errorf("%s: invalid hex", field)
+	}
+	if len(b) != n {
+		return nil, fmt.Errorf("%s: must be %d bytes, got %d", field, n, len(b))
+	}
+	return b, nil
 }
 
 // swapReview verifies the assembled tx encodes EXACTLY the expected terms
 // (token identity preserved + locked to Bob, price to Alice, no surprise
 // outputs, no OP_RETURN) and echoes those terms for the signing prompt.
 // A failed review returns ok=false with the reason — the shell must show
-// the reason and NOT offer to sign (docs/02 §2.5 step 2).
+// the reason and NOT offer to sign (docs/02 §2.5 step 2). Malformed hex or
+// wrong-length fields are rejected up front (audit findings 5, 7).
 func (s *Server) swapReview(w http.ResponseWriter, r *http.Request) {
 	var req swapReviewReq
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, swapReviewResp{OK: false, Error: "bad request"})
 		return
 	}
-	tokenId, _ := hex.DecodeString(req.TokenIdHex)
-	descr, _ := hex.DecodeString(req.DescrHex)
-	hp, _ := hex.DecodeString(req.HPayloadHex)
-	pkh, _ := hex.DecodeString(req.BobPKHHex)
+	tokenId, err := decodeFixed("token_id", req.TokenIdHex, tokenIDLen)
+	if err != nil {
+		writeJSON(w, swapReviewResp{OK: false, Error: err.Error()})
+		return
+	}
+	hp, err := decodeFixed("h_payload", req.HPayloadHex, payloadHashLen)
+	if err != nil {
+		writeJSON(w, swapReviewResp{OK: false, Error: err.Error()})
+		return
+	}
+	pkh, err := decodeFixed("bob_pkh", req.BobPKHHex, ownerPKHLen)
+	if err != nil {
+		writeJSON(w, swapReviewResp{OK: false, Error: err.Error()})
+		return
+	}
+	descr, err := hex.DecodeString(req.DescrHex)
+	if err != nil {
+		writeJSON(w, swapReviewResp{OK: false, Error: "descriptor: invalid hex"})
+		return
+	}
+	if len(descr) == 0 || len(descr) > maxDescriptorLen {
+		writeJSON(w, swapReviewResp{OK: false, Error: fmt.Sprintf("descriptor: must be 1..%d bytes", maxDescriptorLen)})
+		return
+	}
 	exp := token.SwapExpectation{
 		TokenId: tokenId, Descriptor: descr, HPayload: hp, BobOwnerPKH: pkh,
 		AliceAddr: req.AliceAddr, PriceSats: req.PriceSats, DustSats: req.DustSats, MaxOutputs: req.MaxOutputs,
@@ -162,15 +241,11 @@ func (s *Server) swapReview(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, swapReviewResp{OK: false, Error: err.Error()})
 		return
 	}
-	resp := swapReviewResp{OK: true}
-	resp.Terms = &struct {
-		PriceToAliceSats uint64 `json:"price_to_alice_sats"`
-		AliceAddr        string `json:"alice_addr"`
-		TokenIdHex       string `json:"token_id_hex"`
-		HPayloadHex      string `json:"h_payload_hex"`
-		BobOwnerPKHHex   string `json:"bob_owner_pkh_hex"`
-	}{req.PriceSats, req.AliceAddr, req.TokenIdHex, req.HPayloadHex, req.BobPKHHex}
-	writeJSON(w, resp)
+	writeJSON(w, swapReviewResp{OK: true, Terms: &swapTerms{
+		PriceToAliceSats: req.PriceSats, AliceAddr: req.AliceAddr,
+		TokenIdHex: req.TokenIdHex, HPayloadHex: req.HPayloadHex, BobOwnerPKHHex: req.BobPKHHex,
+		Continuity: continuityLabel(req.UseCovenant),
+	}})
 }
 
 func writeJSON(w http.ResponseWriter, v any) {

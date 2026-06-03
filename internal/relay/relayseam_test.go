@@ -1,6 +1,7 @@
 package relay_test
 
 import (
+	"context"
 	"sync"
 	"testing"
 
@@ -28,7 +29,10 @@ type relayTransport struct {
 func (t *relayTransport) Send(frame []byte) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	o := relay.Solve(relay.Object{Stream: t.sendStream, Expiry: t.now + 3600, Payload: frame}, t.bits)
+	o, err := relay.Solve(context.Background(), relay.Object{Stream: t.sendStream, Expiry: t.now + 3600, Payload: frame}, t.bits, relay.MaxSolveAttempts)
+	if err != nil {
+		return err
+	}
 	if _, err := t.ownInv.Add(o, t.now); err != nil {
 		return err
 	}

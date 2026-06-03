@@ -61,12 +61,16 @@ type exchange struct {
 func (s *Server) EnableLiveActions(ad liveAdapter) {
 	s.ad = ad
 	s.ex = &exchange{}
-	s.mux.HandleFunc("/action/setup-mint", s.actionHandler(s.doSetupMint))
-	s.mux.HandleFunc("/action/swap", s.actionHandler(s.doSwap))
-	s.mux.HandleFunc("/action/confirm", s.actionHandler(s.doConfirm))
-	s.mux.HandleFunc("/action/attest", s.actionHandler(s.doAttest))
+	// Every /action/* route holds command authority over the keys, so each is
+	// guard()ed identically to /v2 (POST + control token + same-site). "The
+	// browser holds no keys" is insufficient — the browser has command
+	// authority unless the sidecar authenticates it (audit finding 5).
+	s.mux.HandleFunc("/action/setup-mint", s.guard(s.actionHandler(s.doSetupMint)))
+	s.mux.HandleFunc("/action/swap", s.guard(s.actionHandler(s.doSwap)))
+	s.mux.HandleFunc("/action/confirm", s.guard(s.actionHandler(s.doConfirm)))
+	s.mux.HandleFunc("/action/attest", s.guard(s.actionHandler(s.doAttest)))
 	s.mux.HandleFunc("/log", s.logHandler)
-	s.mux.HandleFunc("/", s.webHandler) // interactive browser control panel
+	s.mux.HandleFunc("/", s.webHandler) // interactive browser control panel (serves the token for same-origin use)
 }
 
 type actionResp struct {

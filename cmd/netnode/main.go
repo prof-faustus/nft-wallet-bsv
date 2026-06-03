@@ -16,6 +16,7 @@
 package main
 
 import (
+	"context"
 	"encoding/binary"
 	"flag"
 	"io"
@@ -27,6 +28,10 @@ import (
 	"github.com/prof-faustus/nft-wallet-bsv/internal/discovery"
 	"github.com/prof-faustus/nft-wallet-bsv/internal/netstack"
 )
+
+// powBudget bounds a single publish PoW grind so a high --pow cannot hang the
+// node (audit finding 9). Named, not magic.
+const powBudget = 30 * time.Second
 
 func main() {
 	id := flag.String("id", "node", "this node's id")
@@ -128,10 +133,14 @@ func serve(r *netstack.Router, c net.Conn, stream uint32, send string, initiator
 			if !published {
 				write([]netstack.Envelope{r.GetAddr()})
 				if send != "" {
-					_, ann, perr := r.Publish(stream, []byte(send))
+					pctx, pcancel := context.WithTimeout(context.Background(), powBudget)
+					_, ann, perr := r.Publish(pctx, stream, []byte(send))
+					pcancel()
 					if perr == nil {
 						write(ann)
 						log.Printf("netnode: published %q on stream %d", send, stream)
+					} else {
+						log.Printf("netnode: publish failed (pow budget?): %v", perr)
 					}
 				}
 				published = true

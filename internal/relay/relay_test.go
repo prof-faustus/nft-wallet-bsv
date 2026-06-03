@@ -1,11 +1,18 @@
 package relay
 
-import "testing"
+import (
+	"context"
+	"testing"
+)
 
 const testBits = 8 // low PoW so tests are fast
 
 func obj(stream uint32, expiry int64, payload string) Object {
-	return Solve(Object{Stream: stream, Expiry: expiry, Payload: []byte(payload)}, testBits)
+	o, err := Solve(context.Background(), Object{Stream: stream, Expiry: expiry, Payload: []byte(payload)}, testBits, MaxSolveAttempts)
+	if err != nil {
+		panic(err)
+	}
+	return o
 }
 
 func TestPoWSolveAndVerify(t *testing.T) {

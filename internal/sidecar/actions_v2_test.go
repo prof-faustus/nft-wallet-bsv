@@ -19,6 +19,11 @@ import (
 func u64(v uint64) *uint64 { return &v }
 func iptr(v int) *int      { return &v }
 
+// testControlToken is the fixed control token the test servers pin so the test
+// helpers can authenticate to the guarded routes (auth.go). Production uses a
+// random per-process token.
+const testControlToken = "test-control-token-0123456789abcdef"
+
 // newV2Server builds a sidecar wired to the SCRIPT-VALIDATING simulation
 // node (test-only). Real sessions run against a real node; the sim lets us
 // exhaustively test every option fast and hermetically.
@@ -30,17 +35,25 @@ func newV2Server(t *testing.T) *httptest.Server {
 	}
 	w := wallet.New(ks, bsvparams.Regtest)
 	s := New(w, engine.New(engine.Buyer), 1)
+	s.SetControlToken(testControlToken)
 	s.EnableV2(NewSimNode())
 	return httptest.NewServer(s.Handler())
 }
 
+// post issues a guarded POST: JSON body + the control-token header (auth.go).
 func post(t *testing.T, base, path string, body any) v2Resp {
 	t.Helper()
 	var buf bytes.Buffer
 	if body != nil {
 		_ = json.NewEncoder(&buf).Encode(body)
 	}
-	resp, err := http.Post(base+path, "application/json", &buf)
+	req, err := http.NewRequest(http.MethodPost, base+path, &buf)
+	if err != nil {
+		t.Fatalf("POST %s: %v", path, err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set(ControlTokenHeader, testControlToken)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("POST %s: %v", path, err)
 	}
@@ -48,7 +61,7 @@ func post(t *testing.T, base, path string, body any) v2Resp {
 	b, _ := io.ReadAll(resp.Body)
 	var r v2Resp
 	if err := json.Unmarshal(b, &r); err != nil {
-		t.Fatalf("POST %s: decode %q: %v", path, string(b), err)
+		t.Fatalf("POST %s: decode %q (status %d): %v", path, string(b), resp.StatusCode, err)
 	}
 	return r
 }

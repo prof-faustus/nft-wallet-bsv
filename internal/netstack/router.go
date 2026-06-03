@@ -15,7 +15,9 @@
 package netstack
 
 import (
+	"context"
 	"encoding/json"
+	"sync"
 	"time"
 
 	"github.com/prof-faustus/nft-wallet-bsv/internal/discovery"
@@ -46,7 +48,14 @@ func Decode(b []byte) (Envelope, error) {
 }
 
 // Router is a composed network node.
+//
+// CONCURRENCY: discovery.Node and relay.Inventory mutate internal maps and are
+// NOT safe for concurrent use; the TCP transport (cmd/netnode) calls Route from
+// one goroutine per connection. The mutex below serialises ALL access to disc
+// and inv so multiple peers cannot trigger a data race / "concurrent map
+// writes" crash (audit finding 4). Every exported method takes mu.
 type Router struct {
+	mu   sync.Mutex
 	disc *discovery.Node
 	inv  *relay.Inventory
 	now  func() int64
@@ -66,6 +75,8 @@ func New(self discovery.NetAddr, nonce uint64, powBits int, ttlSeconds int64, st
 
 // Hello initiates the Tier-A handshake to a peer; returns envelopes to send.
 func (r *Router) Hello(peer discovery.NetAddr) []Envelope {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	return wrapA(r.disc.Connect(peer))
 }
 
@@ -76,9 +87,13 @@ func (r *Router) GetAddr() Envelope {
 }
 
 // Route dispatches an inbound envelope to the right tier and returns replies.
+// Serialised under r.mu (audit finding 4): discovery/relay are not concurrency
+// -safe, and the transport calls Route from a goroutine per connection.
 //
 //trace:impl NET-1
 func (r *Router) Route(from string, e Envelope) ([]Envelope, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	switch e.Tier {
 	case TierA:
 		if e.A == nil {
@@ -98,11 +113,18 @@ func (r *Router) Route(from string, e Envelope) ([]Envelope, error) {
 }
 
 // Publish PoW-stamps payload as an object on a stream, stores it locally, and
-// returns the inv announcement envelopes to broadcast.
+// returns the inv announcement envelopes to broadcast. The PoW grind is bounded
+// by ctx (audit finding 9): a cancelled/expired context aborts Solve with an
+// error rather than spinning forever at a high difficulty.
 //
 //trace:impl NET-1
-func (r *Router) Publish(stream uint32, payload []byte) (relay.Object, []Envelope, error) {
-	o := relay.Solve(relay.Object{Stream: stream, Expiry: r.now() + r.ttl, Payload: payload}, r.inv.PoW())
+func (r *Router) Publish(ctx context.Context, stream uint32, payload []byte) (relay.Object, []Envelope, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	o, err := relay.Solve(ctx, relay.Object{Stream: stream, Expiry: r.now() + r.ttl, Payload: payload}, r.inv.PoW(), relay.MaxSolveAttempts)
+	if err != nil {
+		return relay.Object{}, nil, err
+	}
 	if _, err := r.inv.Add(o, r.now()); err != nil {
 		return o, nil, err
 	}
@@ -112,13 +134,25 @@ func (r *Router) Publish(stream uint32, payload []byte) (relay.Object, []Envelop
 }
 
 // Received returns the objects this node holds for a stream (store-and-forward).
-func (r *Router) Received(stream uint32) []relay.Object { return r.inv.ForStream(stream) }
+func (r *Router) Received(stream uint32) []relay.Object {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.inv.ForStream(stream)
+}
 
 // HandshakeDone reports whether the Tier-A handshake with id completed.
-func (r *Router) HandshakeDone(id string) bool { return r.disc.HandshakeDone(id) }
+func (r *Router) HandshakeDone(id string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.disc.HandshakeDone(id)
+}
 
 // KnownPeers returns the discovered address book.
-func (r *Router) KnownPeers() []discovery.NetAddr { return r.disc.KnownPeers() }
+func (r *Router) KnownPeers() []discovery.NetAddr {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.disc.KnownPeers()
+}
 
 func wrapA(ms []discovery.Message) []Envelope {
 	out := make([]Envelope, 0, len(ms))

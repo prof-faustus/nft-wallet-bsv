@@ -257,9 +257,11 @@ func attStatement(bobPub *ec.PublicKey, ct []byte) []byte {
 //trace:impl HH-1
 type teeEnclave struct{}
 
-// appMeasurement is the fixed application measurement the relying party
-// allowlists for the nft-wallet-bsv enclave app.
-var appMeasurement = sha256.Sum256([]byte("nft-wallet-bsv/enclave/v1"))
+// AppMeasurement is the fixed application measurement the relying party
+// allowlists for the nft-wallet-bsv enclave app. It is published OUT OF BAND
+// (a build-time constant), so a verifier pins it in its tee.Policy rather than
+// trusting whatever measurement an evidence blob carries (audit finding 2).
+var AppMeasurement = sha256.Sum256([]byte("nft-wallet-bsv/enclave/v1"))
 
 // teeEvidence is the attested release/zeroize evidence carried in Sealed.
 type teeEvidence struct {
@@ -280,7 +282,7 @@ func (teeEnclave) Seal(payload []byte, bobPub *ec.PublicKey) (*Sealed, *SellerSe
 	base.Scheme = "tee-enclave"
 	// The (simulated) secure element attests it released K to Bob and
 	// zeroized Alice's copy, signing that statement bound to a fresh nonce.
-	enc, err := tee.Generate(appMeasurement)
+	enc, err := tee.Generate(AppMeasurement)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -308,22 +310,28 @@ func enclaveStatement(bobPub *ec.PublicKey, ct []byte) []byte {
 	return out
 }
 
-// VerifyEnclaveRelease checks the tee-enclave attestation fail-closed: a
-// genuine quote (allowlisted measurement, valid root signature), and the
-// device signed the release/zeroize statement for THIS recipient+ciphertext
+// VerifyEnclaveRelease checks the tee-enclave attestation fail-closed against
+// the CALLER's pinned relying-party policy `pol`: a genuine quote (measurement
+// on pol's allowlist, signature valid under pol's pinned attestation root) and
+// the device signed the release/zeroize statement for THIS recipient+ciphertext
 // bound to the quote's nonce. Returns false for any other scheme or on any
-// tamper/replay/wrong-device.
+// tamper/replay/wrong-device/wrong-root.
 //
-// (Simulation boundary: the pinned root/measurement ride in the evidence
-// here; a real relying party pins the VENDOR root + measurement out of band
-// — same verifier interface. See internal/tee + docs/07 OD-1.)
+// SECURITY (audit finding 2): the trust anchors (measurement allowlist + root
+// pubkey) MUST be configured out of band by the relying party and passed in
+// `pol`. This function deliberately does NOT read s.TEE.Measurement or
+// s.TEE.RootPub — pinning anchors from the evidence under verification would
+// let any party generate its own root/measurement/binding and be accepted,
+// proving only internal consistency, not trustworthiness. A real relying party
+// pins the VENDOR root + the published AppMeasurement; same verifier interface
+// (internal/tee, docs/07 OD-1). The evidence's own RootPub/Measurement are
+// reported for display/enrolment only — never used to build the policy here.
 //
 //trace:impl HH-1
-func VerifyEnclaveRelease(s *Sealed, bobPub *ec.PublicKey) bool {
+func VerifyEnclaveRelease(s *Sealed, bobPub *ec.PublicKey, pol tee.Policy) bool {
 	if s == nil || s.Scheme != "tee-enclave" || s.TEE == nil {
 		return false
 	}
-	pol := tee.Policy{MeasurementAllowlist: [][32]byte{s.TEE.Measurement}, RootPub: s.TEE.RootPub}
 	return tee.VerifyBinding(s.TEE.Binding, pol, s.TEE.Nonce, enclaveStatement(bobPub, s.Ciphertext))
 }
 
