@@ -21,7 +21,6 @@ package sidecar
 import (
 	"context"
 	"crypto/rand"
-	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -41,10 +40,6 @@ import (
 	"github.com/prof-faustus/nft-wallet-bsv/internal/tstage"
 	"github.com/prof-faustus/nft-wallet-bsv/internal/wallet"
 )
-
-// sellerEnclaveMeasurement is the application measurement the seller's
-// (simulated) secure element reports — the allowlisted T-stage app.
-var sellerEnclaveMeasurement = sha256.Sum256([]byte("nft-wallet-bsv/enclave/v1"))
 
 // v2Session holds one user-driven exchange. Every field is populated by an
 // explicit user action; nothing is pre-set.
@@ -185,7 +180,7 @@ func (s *Server) v2Reset(_ context.Context, body json.RawMessage) (any, error) {
 	if req.UseCovenant == nil {
 		return nil, fmt.Errorf("use_covenant is required — choose true (Script-enforced) or false (no default)")
 	}
-	enc, err := tee.Generate(sellerEnclaveMeasurement)
+	enc, err := tee.Generate(shred.AppMeasurement)
 	if err != nil {
 		return nil, err
 	}
@@ -551,7 +546,11 @@ func (s *Server) v2Attest(_ context.Context, _ json.RawMessage) (any, error) {
 			return nil, err
 		}
 		wipe := tstage.AttestWipe(ex.enclave, nonce, ex.tokenId, ex.swapTxid, ex.hp)
-		pol := tee.Policy{MeasurementAllowlist: [][32]byte{ex.enclave.Measurement()}, RootPub: ex.enclave.RootPub()}
+		// Pin the relying-party policy from OUT-OF-BAND anchors (audit finding
+		// 2): the published shred.AppMeasurement and the enclave root captured
+		// at enrolment (v2Reset generated this enclave) — not whatever
+		// measurement the binding self-reports.
+		pol := tee.Policy{MeasurementAllowlist: [][32]byte{shred.AppMeasurement}, RootPub: ex.enclave.RootPub()}
 		wipeStatus = tstage.VerifyWipe(wipe, pol, nonce, ex.tokenId, ex.swapTxid, ex.hp)
 		if wipeStatus == tstage.AttestedWipe {
 			s.mu.Lock()

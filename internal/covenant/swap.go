@@ -22,10 +22,12 @@
 package covenant
 
 import (
+	"bytes"
 	"encoding/hex"
 	"fmt"
 
 	ec "github.com/bsv-blockchain/go-sdk/primitives/ec"
+	"github.com/bsv-blockchain/go-sdk/transaction"
 	sighash "github.com/bsv-blockchain/go-sdk/transaction/sighash"
 	"github.com/prof-faustus/nft-wallet-bsv/internal/token"
 	"github.com/prof-faustus/nft-wallet-bsv/internal/wallet"
@@ -98,6 +100,17 @@ func AssembleCovenantSwap(p CovenantSwapParams, bobKey *ec.PrivateKey) (*wallet.
 		}
 	}
 
+	// EXPLICIT INDEX-ALIGNMENT INVARIANT (audit finding 6): validate the
+	// assembled template BEFORE computing the SIGHASH_SINGLE preimage / signing.
+	// The covenant only constrains the output at the SINGLE input's index, so
+	// the token MUST be input 0 AND its successor MUST be output 0. We assert
+	// that on the actually-assembled tx so any future reordering (extra earlier
+	// inputs, moved outputs) fails loudly here instead of producing an unsafe
+	// signature.
+	if err := validateCovenantTemplate(b, p); err != nil {
+		return nil, err
+	}
+
 	// Compute the token input's SINGLE|FORKID preimage and set the covenant
 	// unlock <preimage> <newOwnerPKH>.
 	preimage, err := b.SighashPreimage(0, sighash.Flag(SighashFlag))
@@ -112,4 +125,49 @@ func AssembleCovenantSwap(p CovenantSwapParams, bobKey *ec.PrivateKey) (*wallet.
 		return nil, err
 	}
 	return b, nil
+}
+
+// validateCovenantTemplate asserts the SIGHASH_SINGLE index-alignment invariant
+// on the ASSEMBLED transaction (audit finding 6): the token covenant input is
+// at input index 0 spending (TokenPrevTxID, 0), and the successor token carrier
+// — same identity (TokenId/Descriptor/HPayload) and value — is at OUTPUT index
+// 0, so the SINGLE-committed output index equals the token input index. This is
+// the structural guard that keeps the covenant a CONSTRAINED construction, not
+// a general transfer that could move the token off index 0.
+//
+// # Errors
+// A descriptive error if inputs/outputs are missing or index 0 is not the
+// token on either side — the caller MUST NOT sign in that case.
+func validateCovenantTemplate(b *wallet.Builder, p CovenantSwapParams) error {
+	raw, err := b.Bytes()
+	if err != nil {
+		return fmt.Errorf("covenant-swap: serialize for template check: %w", err)
+	}
+	tx, err := transaction.NewTransactionFromBytes(raw)
+	if err != nil {
+		return fmt.Errorf("covenant-swap: parse for template check: %w", err)
+	}
+	if len(tx.Inputs) < 1 {
+		return fmt.Errorf("covenant-swap: template has no inputs")
+	}
+	in0 := tx.Inputs[0]
+	if in0.SourceTXID == nil || in0.SourceTXID.String() != p.TokenPrevTxID || in0.SourceTxOutIndex != 0 {
+		return fmt.Errorf("covenant-swap: input 0 is not the token UTXO (%s:0) — SINGLE alignment broken", p.TokenPrevTxID)
+	}
+	if len(tx.Outputs) < 1 || tx.Outputs[0].LockingScript == nil {
+		return fmt.Errorf("covenant-swap: template has no output 0")
+	}
+	out0 := tx.Outputs[0]
+	if out0.Satoshis != p.TokenValue {
+		return fmt.Errorf("covenant-swap: output 0 value %d != token value %d", out0.Satoshis, p.TokenValue)
+	}
+	id, err := token.ParseLockingScript(*out0.LockingScript)
+	if err != nil {
+		return fmt.Errorf("covenant-swap: output 0 is not a token carrier: %w", err)
+	}
+	if !bytes.Equal(id.TokenId, p.TokenId) || !bytes.Equal(id.PayloadDescriptor, p.Descriptor) ||
+		!bytes.Equal(id.HPayload, p.HPayload) || !bytes.Equal(id.OwnerPKH, p.BobOwnerPKH) {
+		return fmt.Errorf("covenant-swap: output 0 does not reproduce the token identity locked to the new owner")
+	}
+	return nil
 }
