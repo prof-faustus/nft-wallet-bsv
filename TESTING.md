@@ -155,6 +155,27 @@ crypto-shred scheme (`internal/shred`).
   evidence. It is also exercised in the full menu cross-product (§4) and is honestly labelled
   a SIMULATION (software keys, self-generated root — not hardware).
 
+## 4b. Full discovery network (docs/03 §3.8) — Tier A + Tier B + the seam
+
+- **`internal/discovery`** (Tier A, Bitcoin-style): TestHandshakeCompletes, addr-gossip
+  propagation (no self-echo), ping/pong, and fail-closed paths — below-min version banned,
+  self-connection nonce banned, message-before-handshake penalised, oversized addr penalised,
+  banned-peer rejected, codec round-trip.
+- **`internal/relay`** (Tier B, Bitmessage-style): PoW solve/verify, Add validation
+  (unsubscribed stream / expired / oversized rejected), the inv→getdata→object exchange,
+  **store-and-forward** (offline recipient retrieves held objects), expiry drop, duplicate
+  no-op.
+- **The seam** (`relayseam_test`): a real secure channel pairs and exchanges an authenticated
+  message end-to-end over the Tier-B relay — the Stage-1 channel runs unchanged on the
+  network.
+
+## 4c. T-stage attested wipe (`internal/tstage`)
+
+- **TestAttestedWipe** — the seller's enclave attests the payload wipe (bound to
+  token + swap + H(payload) + a fresh nonce); fail-closed against replay, wrong
+  token/swap/payload, wrong enclave, and tampered binding. Wired into the menu's attest step,
+  upgrading the deletion banner (SIMULATION boundary preserved).
+
 ## 5. Stage-1 foundations (still green)
 
 Chain adapter + SPV, wallet + full-Script builder, push-drop token carrier (NO

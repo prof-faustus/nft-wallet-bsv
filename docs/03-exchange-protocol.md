@@ -174,11 +174,23 @@ on-chain. An abort/failure after `BROADCAST` is governed by the chain outcome (�
   `docs/04`); that the token cannot be Script-stripped by a hostile spender unless the
   OD-3 covenant is implemented (`docs/02` §2.6).
 
-## 3.8 Deferred — full discovery network
+## 3.8 Full discovery network — BUILT
 
 The minimal two-party pairing (§3.2) is Stage 1. The full network from
 `formal-architecture-v1.docx` §7.8 — **Tier A** Bitcoin-style discovery
 (`version`/`verack`, `getaddr`/`addr`, peer scoring) and **Tier B** Bitmessage-style
 inventory/object relay (`inv`/`getdata`/`object`, streams), with a table-/session-scoped
-relay group — is a later slot. Stage 1 leaves a clean seam: the secure channel and message
-set above sit unchanged on top of either minimal pairing or the full network.
+relay group — is now implemented. Stage 1's clean seam holds: the secure channel and
+message set above sit unchanged on top of either minimal pairing or the full network.
+
+- **Tier A** — `internal/discovery`: the version/verack handshake (with below-min-version
+  rejection and self-connection-nonce detection), getaddr/addr peer exchange + an address
+  book, ping/pong, and peer scoring → banning. Transport-agnostic; JSON wire codec.
+- **Tier B** — `internal/relay`: opaque, proof-of-work-stamped, expiring **objects** gossiped
+  by hash via inv/getdata/object within a **stream** (the session-scoped relay group), with
+  **store-and-forward** retrieval (the inventory holds objects until expiry, so an offline
+  recipient collects them on return). The object payload is the secure-channel frame —
+  opaque to the relay.
+- **The seam, proven** — `internal/relay/relayseam_test`: a real `internal/channel` session
+  pairs (mutual auth) and exchanges an authenticated message end-to-end over the Tier-B
+  relay (exercising inv/getdata/object + PoW on every frame), unchanged from Stage 1.

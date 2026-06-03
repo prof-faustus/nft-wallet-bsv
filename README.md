@@ -90,7 +90,7 @@ Stage 2 is implemented, exhaustively tested, and CI-green (incl. a live SV Node 
 | Dealerless threshold ECDSA custody | 2 | ✅ **built** — `internal/threshold`, `docs/08` |
 | Script-enforced token continuity (`OP_PUSH_TX` covenant) | 2 (OD-3) | ✅ **built** — `internal/covenant`, `docs/08` §8.4 |
 | The **T**-element (read as **TEE**; see `docs/07`) — attested execution + attested wipe | 2 (sim) / 2+ (hardware) | ✅ **attested enclave built** — `tee-enclave` scheme via `internal/tee`, wire-compatible with `Property/tee-sim` (KAT-proven); a SIMULATION (self-generated root). Genuine hardware TEE (verified vendor root) drops into the same verifier — `docs/04` §6, `docs/07` |
-| Full two-tier discovery network (Bitcoin-style + Bitmessage-style) | later | `docs/03` §8 |
+| Full two-tier discovery network (Bitcoin-style + Bitmessage-style) | built | ✅ **built** — Tier A `internal/discovery`, Tier B `internal/relay`; the secure channel runs over it (`docs/03` §3.8) |
 
 ## 4. Document map
 
