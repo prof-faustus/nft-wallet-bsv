@@ -49,6 +49,17 @@ gofmt -l internal tools cmd    # empty output = clean
    The window opens on YOUR desktop. Choose a scheme from the dropdown (nothing
    is preselected), type every amount, and click each step in turn.
 
+**The full discovery network node (runnable, two terminals):**
+
+```
+go build -o netnode.exe ./cmd/netnode
+.\netnode.exe --id A --addr 127.0.0.1:9701 --stream 42
+.\netnode.exe --id B --addr 127.0.0.1:9702 --peer 127.0.0.1:9701 --stream 42 --send "hello over the network"
+```
+B discovers A (Tier-A handshake), then relays a Tier-B object; A prints
+`RECEIVED object on stream 42: "hello over the network"`. Verified end to end
+across two processes over real TCP.
+
 > GUI boundary (honest): the agent cannot render a window on your interactive
 > desktop (a Windows session-isolation rule), so **you** launch the app. What
 > the agent verified for you: the app compiles clean (0 warnings), and the
