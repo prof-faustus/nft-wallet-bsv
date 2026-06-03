@@ -137,6 +137,10 @@ func NewInventory(targetBits int, relay bool, streams ...uint32) *Inventory {
 // Subscribe adds a stream to relay/store.
 func (inv *Inventory) Subscribe(stream uint32) { inv.streams[stream] = true }
 
+// PoW returns the proof-of-work difficulty (leading-zero bits) this
+// inventory requires — so a publisher can Solve to the right target.
+func (inv *Inventory) PoW() int { return inv.targetBits }
+
 // Add validates and stores an object: sufficient PoW, not expired (at now),
 // a subscribed stream, and a bounded payload. Returns (added, error).
 //
