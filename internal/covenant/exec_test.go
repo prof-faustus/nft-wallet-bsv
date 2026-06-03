@@ -3,6 +3,8 @@ package covenant
 import (
 	"bytes"
 	"crypto/rand"
+	"crypto/sha256"
+	"fmt"
 	"math/big"
 	"testing"
 
@@ -84,6 +86,30 @@ func faithful(t *testing.T) spendParams {
 	desc := []byte("nftbsv/v2")
 	h := randBytes(32)
 	owner := randBytes(20)
+	succ, err := token.BuildLockingScript(tokenId, desc, h, owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return spendParams{
+		tokenId: tokenId, desc: desc, hPayload: h, covValue: tokenValue,
+		out0Script: succ, out0Value: tokenValue, declaredOwner: owner,
+	}
+}
+
+// detBytes derives n deterministic bytes from a seed (reproducible tests).
+func detBytes(seed string, n int) []byte {
+	h := sha256.Sum256([]byte(seed))
+	return h[:n]
+}
+
+// detFaithful builds a DETERMINISTIC faithful transfer from a seed, so DER
+// edge cases and the liveness sweep are reproducible (no flaky randomness).
+func detFaithful(t *testing.T, seed string) spendParams {
+	t.Helper()
+	tokenId := detBytes(seed+"|tok", 32)
+	desc := []byte("nftbsv/v2")
+	h := detBytes(seed+"|h", 32)
+	owner := detBytes(seed+"|own", 20)
 	succ, err := token.BuildLockingScript(tokenId, desc, h, owner)
 	if err != nil {
 		t.Fatal(err)
@@ -209,7 +235,7 @@ func TestCovenantLivenessSweep(t *testing.T) {
 		n = 300
 	}
 	for i := 0; i < n; i++ {
-		p := faithful(t)
+		p := detFaithful(t, fmt.Sprintf("sweep-%d", i)) // deterministic → reproducible
 		p.lockTime = uint32(i*7919 + 1)
 		if err := run(t, p); err != nil {
 			t.Fatalf("iter %d: faithful spend rejected: %v", i, err)
@@ -226,10 +252,10 @@ func TestCovenantLivenessSweep(t *testing.T) {
 //trace:test CN-1
 func TestCovenantDEREdgeOnEngine(t *testing.T) {
 	c, _ := constants()
-	base := faithful(t)
+	base := detFaithful(t, "der-edge") // DETERMINISTIC base → reproducible search
 
 	findLockTime := func(pred func(s *big.Int) bool) (uint32, bool) {
-		for lt := uint32(0); lt < 200000; lt++ {
+		for lt := uint32(0); lt < 400000; lt++ {
 			p := base
 			p.lockTime = lt
 			z := zForSpend(t, p)
@@ -239,39 +265,41 @@ func TestCovenantDEREdgeOnEngine(t *testing.T) {
 		}
 		return 0, false
 	}
+	accept := func(name string, pred func(*big.Int) bool, required bool) {
+		lt, ok := findLockTime(pred)
+		if !ok {
+			if required {
+				t.Fatalf("could not construct the %q case in range", name)
+			}
+			t.Logf("no %q case found in range", name)
+			return
+		}
+		p := base
+		p.lockTime = lt
+		if err := run(t, p); err != nil {
+			t.Fatalf("%s spend (lockTime=%d) rejected: %v", name, lt, err)
+		}
+	}
 
-	// s with a leading zero byte: s < 2^248.
 	twoTo248 := new(big.Int).Lsh(big.NewInt(1), 248)
-	if lt, ok := findLockTime(func(s *big.Int) bool { return s.Cmp(twoTo248) < 0 }); ok {
-		p := base
-		p.lockTime = lt
-		if err := run(t, p); err != nil {
-			t.Fatalf("leading-zero-s spend (lockTime=%d) rejected: %v", lt, err)
+	topByte := func(s *big.Int) byte {
+		b := s.Bytes()
+		if len(b) == 0 {
+			return 0
 		}
-	} else {
-		t.Log("no leading-zero s found in range (covered by pushtx_test edges)")
+		return b[0]
 	}
 
-	// The EXACT bug class that liveness caught: s < 2^248 (has leading zeros)
-	// AND its most-significant magnitude byte >= 0x80 — so after stripping
-	// leading zeros the top byte has the high bit set and a DER sign byte
-	// must be re-added. Prove the engine accepts it.
-	highBitAfterStrip := func(s *big.Int) bool {
-		if s.Cmp(twoTo248) >= 0 {
-			return false // no leading zero, different path
-		}
-		b := s.Bytes() // minimal big-endian magnitude
-		return len(b) > 0 && b[0]&0x80 != 0
-	}
-	if lt, ok := findLockTime(highBitAfterStrip); ok {
-		p := base
-		p.lockTime = lt
-		if err := run(t, p); err != nil {
-			t.Fatalf("high-bit-after-strip s (lockTime=%d) rejected: %v", lt, err)
-		}
-	} else {
-		t.Fatal("could not construct the high-bit-after-strip case in range")
-	}
+	// (1) leading-zero s: s < 2^248 (the strip path shortens the encoding).
+	accept("leading-zero-s", func(s *big.Int) bool { return s.Cmp(twoTo248) < 0 }, true)
+	// (2) THE negative-zero trap: a stripped top magnitude byte of EXACTLY
+	// 0x80 (BIN2NUM(0x80)=0). The strip must NOT eat it and the sign-byte
+	// step MUST add a 0x00 prefix. This is the exact class CI caught.
+	accept("top-byte-0x80", func(s *big.Int) bool { return topByte(s) == 0x80 }, true)
+	// (3) high-bit-set-not-0x80: top byte in 0x81..0xff (BIN2NUM<0 path).
+	accept("top-byte-high-bit", func(s *big.Int) bool { b := topByte(s); return b > 0x80 }, true)
+	// (4) deep leading zeros: s < 2^240 (multiple 0x00 bytes stripped).
+	accept("multi-leading-zero", func(s *big.Int) bool { return s.Cmp(new(big.Int).Lsh(big.NewInt(1), 240)) < 0 }, false)
 }
 
 // zForSpend recomputes the message integer z = int(Hash256(preimage)) for a

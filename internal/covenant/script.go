@@ -72,13 +72,20 @@ func reverse32(s *script.Script) {
 // stripOneLeadingZero removes a single leading 0x00 byte from the
 // big-endian string on top, or restores it unchanged if the leading byte is
 // non-zero. Net stack effect: 1 → 1.
+//
+// CRITICAL: the zero test is a BYTE comparison to 0x00 — NOT OP_BIN2NUM==0.
+// In Script the byte 0x80 is "negative zero" (BIN2NUM(0x80)=0), so a numeric
+// test would wrongly strip a significant 0x80 magnitude byte and corrupt s
+// (seen as a CHECKSIG-false liveness failure on leading-zero-s spends). Byte
+// equality treats 0x80 as the non-zero byte it is.
 func stripOneLeadingZero(s *script.Script) {
 	_ = s.AppendOpcodes(script.Op1, script.OpSPLIT) // head(1) tail
 	_ = s.AppendOpcodes(script.OpSWAP)              // tail head
-	_ = s.AppendOpcodes(script.OpDUP, script.OpBIN2NUM)
-	_ = s.AppendOpcodes(script.Op0, script.OpEQUAL) // head == 0 ?
+	_ = s.AppendOpcodes(script.OpDUP)               // tail head head
+	_ = s.AppendPushData([]byte{0x00})
+	_ = s.AppendOpcodes(script.OpEQUAL) // head == byte 0x00 ?
 	_ = s.AppendOpcodes(script.OpIF)
-	_ = s.AppendOpcodes(script.OpDROP) //   zero: drop it, keep tail
+	_ = s.AppendOpcodes(script.OpDROP) //   zero byte: drop it, keep tail
 	_ = s.AppendOpcodes(script.OpELSE)
 	_ = s.AppendOpcodes(script.OpSWAP, script.OpCAT) //   non-zero: restore head||tail
 	_ = s.AppendOpcodes(script.OpENDIF)
@@ -97,15 +104,22 @@ func stripLeadingZeros(s *script.Script) {
 // non-empty) big-endian magnitude on top: if its leading byte has the high
 // bit set, prepend a single 0x00 so it is not read as negative. Without
 // this, a stripped magnitude like 00 FF .. would become FF .. — which the
-// engine rejects as "S is negative". (The pure-Go derInt does the same; see
-// pushtx.go. Low-S guarantees we never need this for the FULL value, but a
-// SHORTER stripped value can still expose a high-bit leading byte.)
+// engine rejects as "S is negative".
+//
+// CRITICAL: the high-bit test is a BITWISE AND with 0x80 (a BYTE test) — NOT
+// OP_BIN2NUM<0. A leading byte of exactly 0x80 has the high bit set yet is
+// "negative zero" (BIN2NUM(0x80)=0, which is not < 0), so a numeric test
+// would miss it and emit a sign-less 0x80.. that the engine reads as
+// negative. AND-ing the byte with 0x80 catches the whole 0x80..0xff range.
 func derSignByte(s *script.Script) {
 	_ = s.AppendOpcodes(script.OpDUP)               // x x
 	_ = s.AppendOpcodes(script.Op1, script.OpSPLIT) // x head tail
 	_ = s.AppendOpcodes(script.OpDROP)              // x head
-	_ = s.AppendOpcodes(script.OpBIN2NUM)           // x headNum  (negative iff head>=0x80)
-	_ = s.AppendOpcodes(script.Op0, script.OpLESSTHAN)
+	_ = s.AppendPushData([]byte{0x80})
+	_ = s.AppendOpcodes(script.OpAND) // x (head & 0x80)
+	_ = s.AppendPushData([]byte{0x00})
+	_ = s.AppendOpcodes(script.OpEQUAL) // x (high bit CLEAR?)
+	_ = s.AppendOpcodes(script.OpNOT)   // x (high bit SET?)
 	_ = s.AppendOpcodes(script.OpIF)
 	_ = s.AppendPushData([]byte{0x00}) // x 0x00
 	_ = s.AppendOpcodes(script.OpSWAP, script.OpCAT)
