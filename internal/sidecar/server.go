@@ -37,6 +37,7 @@ type Server struct {
 	confDepth uint32
 	curDepth  uint32
 	attest    deletion.AttestStatus
+	delLabel  string // T-stage override for the deletion label (when set)
 	mux       *http.ServeMux
 
 	actMu sync.Mutex // serializes live actions (one button at a time)
@@ -88,6 +89,9 @@ func (s *Server) status(w http.ResponseWriter, _ *http.Request) {
 	s.mu.Lock()
 	d := uistate.ForExchange(s.eng.State(), s.eng.Reason(), s.curDepth, s.confDepth)
 	dl := uistate.DeletionLabel(s.attest)
+	if s.delLabel != "" {
+		dl = s.delLabel // T-stage attested-wipe override (docs/04 §4.6)
+	}
 	s.mu.Unlock()
 	writeJSON(w, statusResp{d.EngineState, d.Label, d.Success, d.Pending, d.Failed, dl})
 }

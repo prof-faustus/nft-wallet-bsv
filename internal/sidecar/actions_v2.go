@@ -20,6 +20,8 @@ package sidecar
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -33,9 +35,15 @@ import (
 	"github.com/prof-faustus/nft-wallet-bsv/internal/deletion"
 	"github.com/prof-faustus/nft-wallet-bsv/internal/engine"
 	"github.com/prof-faustus/nft-wallet-bsv/internal/shred"
+	"github.com/prof-faustus/nft-wallet-bsv/internal/tee"
 	"github.com/prof-faustus/nft-wallet-bsv/internal/token"
+	"github.com/prof-faustus/nft-wallet-bsv/internal/tstage"
 	"github.com/prof-faustus/nft-wallet-bsv/internal/wallet"
 )
+
+// sellerEnclaveMeasurement is the application measurement the seller's
+// (simulated) secure element reports — the allowlisted T-stage app.
+var sellerEnclaveMeasurement = sha256.Sum256([]byte("nft-wallet-bsv/enclave/v1"))
 
 // v2Session holds one user-driven exchange. Every field is populated by an
 // explicit user action; nothing is pre-set.
@@ -64,6 +72,8 @@ type v2Session struct {
 
 	swapTxid  string
 	priceSats uint64
+
+	enclave *tee.Enclave // seller's (simulated) secure element — T-stage custody + attested wipe
 
 	log []string
 }
@@ -164,11 +174,16 @@ func (s *Server) v2Reset(_ context.Context, body json.RawMessage) (any, error) {
 	if req.UseCovenant == nil {
 		return nil, fmt.Errorf("use_covenant is required — choose true (Script-enforced) or false (no default)")
 	}
+	enc, err := tee.Generate(sellerEnclaveMeasurement)
+	if err != nil {
+		return nil, err
+	}
 	s.mu.Lock()
-	s.v2 = &v2Session{scheme: req.Scheme, useCovenant: *req.UseCovenant}
+	s.v2 = &v2Session{scheme: req.Scheme, useCovenant: *req.UseCovenant, enclave: enc}
 	s.eng = engine.New(s.eng.Role())
 	s.curDepth = 0
 	s.attest = deletion.AttestAbsent
+	s.delLabel = ""
 	s.mu.Unlock()
 	s.v2logf("Session reset. Scheme = %q; continuity = %s (both chosen by the user).", req.Scheme, covLabel(*req.UseCovenant))
 	return map[string]any{"scheme": req.Scheme, "use_covenant": *req.UseCovenant}, nil
@@ -505,7 +520,26 @@ func (s *Server) v2Attest(_ context.Context, _ json.RawMessage) (any, error) {
 		return nil, err
 	}
 	s.v2logf("Seller sent a deletion ATTESTATION; buyer validated signature + bindings. A signed CLAIM — NOT proof the copy is gone.")
-	return map[string]any{"attested": true}, nil
+
+	// T-stage (docs/04 §4.6): the seller's enclave attests it WIPED the
+	// payload, bound to this token + swap + H(payload). The CDA carries it.
+	wipeStatus := tstage.CooperativeOnly
+	if ex.enclave != nil {
+		nonce := make([]byte, 16)
+		if _, err := rand.Read(nonce); err != nil {
+			return nil, err
+		}
+		wipe := tstage.AttestWipe(ex.enclave, nonce, ex.tokenId, ex.swapTxid, ex.hp)
+		pol := tee.Policy{MeasurementAllowlist: [][32]byte{ex.enclave.Measurement()}, RootPub: ex.enclave.RootPub()}
+		wipeStatus = tstage.VerifyWipe(wipe, pol, nonce, ex.tokenId, ex.swapTxid, ex.hp)
+		if wipeStatus == tstage.AttestedWipe {
+			s.mu.Lock()
+			s.delLabel = "Deletion: " + string(tstage.AttestedWipe)
+			s.mu.Unlock()
+			s.v2logf("T-stage: the seller's enclave ATTESTED the payload wipe (measurement-allowlisted, root-signed, nonce-bound). Upgraded from a bare CLAIM — but still a SIMULATION, not hardware-verified deletion.")
+		}
+	}
+	return map[string]any{"attested": true, "t_stage": string(wipeStatus)}, nil
 }
 
 // readAll reads the request body (bounded) for JSON decoding.
